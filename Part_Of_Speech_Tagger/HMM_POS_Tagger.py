@@ -1,5 +1,6 @@
 # Created By Jacob Abbott, 03/15/2022
 import re
+import sys
 import nltk
 import math
 
@@ -64,7 +65,7 @@ def create_matricies():
         for wordTag_key in wordTag_counts.keys(): 
             if tag_key == wordTag_key[1]:
                 prob = wordTag_counts[wordTag_key] / tag_counts[tag_key]
-                prob = abs(math.log10(prob))
+                prob = abs(math.log10(prob)) ## TODO: figure out why we do this
                 emission_matrix[(tag_key,wordTag_key)] = prob
     # transition matrix
     for tag_key in tag_counts.keys():
@@ -222,8 +223,43 @@ def hmm_viterbi(model_fname: str, txt_fname: str):
 
     print(f'{POS_sequence=}')
 
+def download_nltk_data():
+    try:
+        nltk.data.find('corpora/brown')
+    except LookupError:
+        nltk.download('brown')
+    try:
+        nltk.data.find('corpora/words')
+    except LookupError:
+        nltk.download('words')
+    try:
+        nltk.data.find('tokenizers/punkt')
+    except LookupError:
+        nltk.download('punkt')
+
 def main():
-    hmm_model_build()
+    # Download required NLTK data if not present
+    download_nltk_data()
+
+    # Check command-line arguments
+    if len(sys.argv) == 1:
+        # No arguments: build the model
+        print("Building HMM model from Brown corpus...")
+        hmm_model_build()
+        print("Model saved to model.dat")
+    elif len(sys.argv) == 3:
+        # Two arguments: run hmm_sequence
+        model_fname = sys.argv[1]
+        txt_fname = sys.argv[2]
+        print(f"Running HMM sequence on {txt_fname} using model {model_fname}")
+        result = hmm_sequence(model_fname, txt_fname)
+        print(f"Total probability: {result}")
+    else:
+        print("Usage:")
+        print("  python HMM_POS_Tagger.py                    (builds model.dat)")
+        print("  python HMM_POS_Tagger.py <model> <textfile> (runs hmm_sequence)")
+        
+   # hmm_model_build()
 
 
 if __name__ == '__main__':
