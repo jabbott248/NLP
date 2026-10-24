@@ -136,7 +136,7 @@ def hmm_sequence(model_fname: str, txt_fname: str):
     transition_m = matricies[1]
     # Get tags from transition matrix
     with open(txt_fname, 'r') as f:
-        total_prob = 1
+        total_cost = 0 # sum of -log10 probabilities
         prev_tag = '<ST>'
         for line in f:  # file is only one line
             line = line.strip()
@@ -156,17 +156,18 @@ def hmm_sequence(model_fname: str, txt_fname: str):
                     emission_prob = emission_m[(tag,(word,tag))]
                 else: # if word tag bigram does not exist, use the probability that a tag follows an unknown word
                     emission_prob = emission_m[(tag,('UNK',tag))]
-                # skip starting probability
+                # skip starting probability (a cost of 0 means probability 1)
                 if prev_tag == '<ST>':
-                    transition_prob = 1
+                    transition_prob = 0
                 else:
-                    transition_prob = transition_m[(tag,(prev_tag,tag))]
-                prob = emission_prob * transition_prob
-                # Update total probability
-                total_prob = total_prob * prob
+                    # transitions are stored as (prev_tag, (tag, prev_tag))
+                    transition_prob = transition_m[(prev_tag,(tag,prev_tag))]
+                # values are -log10 costs, so add them instead of multiplying
+                total_cost = total_cost + emission_prob + transition_prob
                 # update previous tag
                 prev_tag = tag
-    return total_prob
+    # convert the total cost back into a probability
+    return 10 ** -total_cost
 
 # Big function
 def hmm_viterbi(model_fname: str, txt_fname: str):
