@@ -1,0 +1,9 @@
+# Install with: pip3 install -r requirements.txt
+
+# Part_Of_Speech_Tagger, Author_Language_Model, Audio_Spectrogram
+nltk>=3.10.3
+
+# Audio_Spectrogram
+numpy
+matplotlib
+pillow
