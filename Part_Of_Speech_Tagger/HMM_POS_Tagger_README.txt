@@ -11,15 +11,16 @@ trained on the Brown corpus (via NLTK). It has three parts:
                             - how often each (word, tag) pair occurs
                             - how often each tag follows another tag
                           From these it computes two tables and writes them
-                          to model.dat:
+                          to model_dat.json:
                             m1 = emission probabilities   P(word | tag)
                             m2 = transition probabilities P(tag | previous tag)
-                          Probabilities are stored as -log10(p) ("costs").
+                          The JSON objects "m1" and "m2" map tags and tag
+                          transitions to -log10(p) costs.
                           The vocabulary includes NLTK's English word list
                           plus words seen at least twice in Brown. Other
                           words are replaced with the token 'UNK'.
 
-  2. hmm_sequence()     - Loads model.dat and scores an already-tagged
+  2. hmm_sequence()     - Loads model_dat.json and scores an already-tagged
                           sentence (word/TAG word/TAG ...), i.e. how likely
                           that tag sequence is under the model.
 
@@ -31,7 +32,7 @@ trained on the Brown corpus (via NLTK). It has three parts:
 Files in this folder
 --------------------
   HMM_POS_Tagger.py         the script
-  model.dat                 a pre-built model (output of build mode)
+  model_dat.json            a pre-built model (output of build mode)
   test_tagged_sentence.txt  sample input for sequence mode (word/TAG format)
   test_untagged.txt         sample input for --tag mode (hmm_viterbi)
 
@@ -55,21 +56,21 @@ Setup
 
 How to run
 ----------
-Run from inside this folder. model.dat is always written to the current
+Run from inside this folder. model_dat.json is always written to the current
 directory.
 
-  Build the model (overwrites model.dat; takes a couple of seconds):
+  Build the model (overwrites model_dat.json; takes a couple of seconds):
 
       python3 HMM_POS_Tagger.py
 
   Score a tagged sentence with a model:
 
-      python3 HMM_POS_Tagger.py model.dat test_tagged_sentence.txt
+      python3 HMM_POS_Tagger.py model_dat.json test_tagged_sentence.txt
 
   Expected output:
 
-      Running HMM sequence on test_tagged_sentence.txt using model model.dat
-      Total probability: 1.0446386439769002e-68
+      Running HMM sequence on test_tagged_sentence.txt using model model_dat.json
+      Total probability: 1.59524156182099e-75
 
   Small numbers like this are normal: it's the joint probability of every
   word and tag in a 25-word sentence. Compare scores between taggings of
@@ -78,15 +79,15 @@ directory.
 
   Tag an untagged sentence (one sentence per line):
 
-      python3 HMM_POS_Tagger.py --tag model.dat test_untagged.txt
+      python3 HMM_POS_Tagger.py --tag model_dat.json test_untagged.txt
 
   Expected output:
 
-      Running HMM Viterbi on test_untagged.txt using model model.dat
-      The/AT Fulton/NP-TL County/NN-TL Grand/JJ-TL Jury/NN-TL said/VBD Friday/NR an/AT investigation/NN of/IN Atlanta/NP 's/, recent/JJ primary/JJ election/NN produced/VBD no/AT evidence/NN that/CS any/DTI irregularities/NNS took/VBD place/NN ./.
-      Probability of best tagging: 4.84368761480502e-71
+      Running HMM Viterbi on test_untagged.txt using model model_dat.json
+      The/AT Fulton/NP-TL County/NN-TL Grand/JJ-TL Jury/NN-TL said/VBD Friday/NR an/AT investigation/NN of/IN Atlanta/NP 's/NP$ recent/JJ primary/JJ election/NN produced/VBD no/AT evidence/NN that/CS any/DTI irregularities/NNS took/VBD place/NN ./.
+      Probability of best tagging: 2.859351752525453e-78
 
-  Rebuild model.dat after changing the tagger so it uses the updated
+  Rebuild model_dat.json after changing the tagger so it uses the updated
   vocabulary. Frequent punctuation and word forms now have their own
   emissions instead of sharing the 'UNK' emission. The probability is
   P(words, tags) for the best tagging only, not P(words) summed over all
@@ -129,13 +130,8 @@ Wrong results / crashes in hmm_sequence()
    transition costs, then converts the total back to a probability with
    10 ** -total_cost. Before the fix, the sample sentence scored 10916655,
    which isn't a valid probability.
-   (This answers the TODO on line 75: logs prevent floating-point underflow
-   when you multiply many small probabilities, and abs() turns the negative
-   logs into positive costs.)
-   Still to clean up: read_matrix_file replaces a cost of 0.0 with 0.0003
-   (lines 131-132). A cost of 0 means probability 1, which is valid. The
-   replacement only existed to stop the product becoming 0. Now that costs
-   are added it makes almost no difference, but it can be removed.
+   Logs prevent floating-point underflow when multiplying many small
+   probabilities, and abs() turns the negative logs into positive costs.
 
 6. [FIXED] Crashed with KeyError on unseen combinations.
    There was no smoothing, so any tag transition that never appeared in
@@ -156,7 +152,7 @@ Wrong results / crashes in hmm_sequence()
    the first transition. Now '<ST>' is counted once per sentence, the model
    stores P(tag | <ST>) (211 start tags, summing to 1), and both
    hmm_sequence() and hmm_viterbi() use it. Models built before this fix
-   have no start transitions, so rebuild model.dat.
+   have no start transitions, so rebuild model_dat.json.
    Still to do: there is no end-of-sentence tag, so P(</S> | last tag) is
    not part of the score.
 
@@ -198,7 +194,7 @@ the best path. Tag pairs never seen in Brown get UNSEEN_COST (probability
     empty file causes NameError on 'tokens'.
 
 12. [FIXED] main() couldn't run it. Use
-    "python3 HMM_POS_Tagger.py --tag model.dat file.txt".
+    "python3 HMM_POS_Tagger.py --tag model_dat.json file.txt".
 
 Model quality / smaller issues
 ------------------------------
@@ -206,18 +202,20 @@ Model quality / smaller issues
     The vocabulary now includes words absent from NLTK's English word list
     when they occur at least twice in Brown. Words absent from both lists
     and seen only once in Brown remain mapped to 'UNK'. The same vocabulary
-    is used when training, scoring and tagging. Rebuild model.dat to apply
-    the change.
+    is used when training, scoring and tagging. Rebuild model_dat.json to
+    apply the change.
 
-14. Slow nested loops when building (lines 71-87). Each tag is compared
-    against every (word, tag) pair. Looping over wordTag_counts once and
-    dividing by tag_counts[tag] gives the same result. (Building still only
-    takes a few seconds, so this is low priority.)
+14. [FIXED] Slow nested loop when building the emission matrix.
+    Each observed (word, tag) pair is now processed once and divided by its
+    tag count, instead of comparing every tag with every pair. This produces
+    the same emission costs with less work.
 
-15. Storing the model as text and reading it back with a regex (lines
-    91-138) is fragile. json or pickle would be simpler and safer.
+15. [FIXED] Storing the model as text and parsing it with a regex was fragile.
+    The model is now stored as JSON with "m1" and "m2" objects. The reader
+    reconstructs the same tuple-key dictionaries used by hmm_sequence() and
+    hmm_viterbi().
 
 16. Small cleanups: the regexes are compiled inside loops (lines 122 and
     156), "x in d.keys()" can be "x in d" or collections.Counter, the output
-    path is hard-coded to 'model.dat', and "matricies" should be
+    path is hard-coded to 'model_dat.json', and "matricies" should be
     "matrices".

@@ -1,9 +1,11 @@
 # Created By Jacob Abbott, 03/15/2022
+import json
+import math
 import re
 import sys
-import nltk
-import math
 from collections import Counter
+
+import nltk
 
 # Cost (-log10 probability) used for any tag transition or (word, tag) pair
 # that never appears in the Brown corpus. 10 means a probability of 1e-10,
@@ -13,12 +15,12 @@ UNSEEN_COST = 10
 
 
 # Takes the brown corpus, and creates emmission and transition
-# Matricies, then writes them to a file named model.dat
+# Matricies, then writes them to a file named model_dat.json
 def hmm_model_build():
     matricies = create_matricies()
     m1 = matricies[0]
     m2 = matricies[1]
-    # Write matricies to model.dat
+    # Write matricies to model_dat.json
     write_matrix_to_file(m1,m2)
 
 def create_vocab(corpus):
@@ -76,12 +78,11 @@ def create_matricies():
     emission_matrix = {}
     transition_matrix = {}
     # emmision matrix
-    for tag_key in tag_counts.keys():
-        for wordTag_key in wordTag_counts.keys(): 
-            if tag_key == wordTag_key[1]:
-                prob = wordTag_counts[wordTag_key] / tag_counts[tag_key]
-                prob = abs(math.log10(prob)) ## TODO: figure out why we do this
-                emission_matrix[(tag_key,wordTag_key)] = prob
+    for wordTag_key, count in wordTag_counts.items():
+        tag = wordTag_key[1]
+        prob = count / tag_counts[tag]
+        prob = abs(math.log10(prob))
+        emission_matrix[(tag,wordTag_key)] = prob
     # transition matrix
     # '<ST>' (start of sentence) is a previous tag once per sentence, so
     # P(tag | <ST>) = (sentences starting with tag) / (number of sentences)
@@ -98,51 +99,42 @@ def create_matricies():
 
 ## Helper for hmm_model_build()
 def write_matrix_to_file(m1: dict, m2: dict):
-    with open('model.dat', 'w') as f:
-        f.write('m1\n')
-        for key in m1.keys():
-            value = m1[key]
-            f.write(f'{key},{value}\n')
-        f.write('m2\n')
-        for key in m2.keys():
-            value = m2[key]
-            f.write(f'{key},{value}\n')
+    model = {
+        'm1': _format_matrix(m1),
+        'm2': _format_matrix(m2),
+    }
+    with open('model_dat.json', 'w') as f:
+        json.dump(model, f)
+        f.write('\n')
     return 0
 
+def _format_matrix(matrix):
+    """Convert tuple-keyed matrix entries to nested dictionaries for JSON.
+
+    For example, (('NN', ('cat', 'NN')), 0.42) becomes
+    {'NN': {'cat': 0.42}}.
+    """
+    grouped = {}
+    for (key, (value, _)), cost in matrix.items():
+        grouped.setdefault(key, {})[value] = cost
+    return grouped
+
 ## Helper for hmm_sequence
-# reads a matrix.dat file, looks for m1 and m2
+# reads a JSON model file containing m1 and m2
 # returns two matrix dictionaries
 def read_matrix_file(fname: str):
-    m1 = {} # emission
-    m2 = {} # transition
-    curr_matrix = -1
     with open(fname, 'r') as f:
-        for line in f:
-            line = line.strip() # get rid of new line characters
-            # check first line is 'm1'
-            if line == 'm1':
-                curr_matrix = 1
-            elif line == 'm2':
-                curr_matrix = 2
-            # update appropriate matrix
-            else:
-                # ('AT', ('UNK', 'AT')),0.08493349258363193
-                pattern = re.compile(r"\(['\"](.+)['\"], \(['\"](.+)['\"], ['\"](.+)['\"]\)\),(.+)")
-                match = re.match(pattern, line)
-                if match == None:
-                    continue
-                tag = match.group(1)
-                bigram1 = match.group(2)
-                bigram2 = match.group(3)
-                prob = match.group(4)
-                prob = float(prob)
-                if prob == 0.0: # Don't add any zero values 
-                    prob = 0.0003 
-                if curr_matrix == 1: # Matches emission pattern
-                    m1[(tag,(bigram1,bigram2))] = prob
-                elif curr_matrix == 2: # Matches Transition pattern
-                    m2[(tag,(bigram1,bigram2))] = prob
-                
+        model = json.load(f)
+    m1 = {
+        (tag, (word, tag)): cost
+        for tag, words in model['m1'].items()
+        for word, cost in words.items()
+    }
+    m2 = {
+        (prev_tag, (tag, prev_tag)): cost
+        for prev_tag, tags in model['m2'].items()
+        for tag, cost in tags.items()
+    }
     return m1,m2
 
 # Big function
@@ -289,7 +281,7 @@ def main():
         # No arguments: build the model
         print("Building HMM model from Brown corpus...")
         hmm_model_build()
-        print("Model saved to model.dat")
+        print("Model saved to model_dat.json")
     elif len(sys.argv) == 3:
         # Two arguments: run hmm_sequence
         model_fname = sys.argv[1]
@@ -307,7 +299,7 @@ def main():
             print(f"Probability of best tagging: {probability}")
     else:
         print("Usage:")
-        print("  python HMM_POS_Tagger.py                          (builds model.dat)")
+        print("  python HMM_POS_Tagger.py                          (builds model_dat.json)")
         print("  python HMM_POS_Tagger.py <model> <textfile>       (runs hmm_sequence)")
         print("  python HMM_POS_Tagger.py --tag <model> <textfile> (runs hmm_viterbi)")
         
