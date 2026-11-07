@@ -26,13 +26,13 @@ Usage:
 """
 
 
-# Takes the brown corpus, and creates emmission and transition
-# Matricies, then writes them to a file named model_dat.json
+# Takes the brown corpus, and creates emission and transition
+# Matrices, then writes them to a file named model_dat.json
 def hmm_model_build():
-    matricies = create_matricies()
-    m1 = matricies[0]
-    m2 = matricies[1]
-    # Write matricies to model_dat.json
+    matrices = create_matrices()
+    m1 = matrices[0]
+    m2 = matrices[1]
+    # Write matrices to model_dat.json
     write_matrix_to_file(m1,m2)
 
 def create_vocab(corpus):
@@ -47,65 +47,43 @@ def create_vocab(corpus):
 # for each word: counts number of times each tag has a word
 # unknown words are treated as an unknown token
 # Creates probability matrix that a word has a tag
-def create_matricies():
+def create_matrices():
     corpus = nltk.corpus.brown.tagged_sents()
     vocab = create_vocab(corpus)
-    tag_counts = {}
-    word_counts = {}
-    wordTag_counts = {}
-    tagTag_counts = {}
+    tag_counts = Counter()      # tag -> count
+    wordTag_counts = Counter()  # (word, tag) -> count
+    tagTag_counts = Counter()   # (tag, prev_tag) -> count
     sentence_count = 0
     for sentence in corpus: # For each sentence in the corpus
         sentence_count += 1
         prev_tag = '<ST>'
-        for word_tag in sentence:
-            word = word_tag[0]
+        for word, tag in sentence:
             word = word.lower()
-            tag = word_tag[1]
-            if not word in vocab: # check that word is in vocab
+            if word not in vocab: # check that word is in vocab
                 word = 'UNK'
-            # update tag counts
-            if tag in tag_counts.keys():
-                tag_counts[tag]+=1
-            else:
-                tag_counts[tag] = 1
-            # update word counts
-            if word in word_counts.keys():
-                word_counts[word]+=1
-            else:
-                word_counts[word] = 1
-            # update word tag counts
-            if (word,tag) in wordTag_counts.keys():
-                wordTag_counts[(word,tag)]+=1
-            else:
-                wordTag_counts[(word,tag)] = 1
-            # update tagTag counts
-            if (tag,prev_tag) in tagTag_counts.keys():
-                tagTag_counts[(tag,prev_tag)]+=1
-            else:
-                tagTag_counts[(tag,prev_tag)] = 1
-            # udpate prev_tag
+            tag_counts[tag] += 1
+            wordTag_counts[(word, tag)] += 1
+            tagTag_counts[(tag, prev_tag)] += 1
             prev_tag = tag
-    # compute probability matricies
+    # compute probability matrices
     emission_matrix = {}
     transition_matrix = {}
-    # emmision matrix
+    # emission matrix: P(word | tag)
     for wordTag_key, count in wordTag_counts.items():
         tag = wordTag_key[1]
         prob = count / tag_counts[tag]
         prob = abs(math.log10(prob))
         emission_matrix[(tag,wordTag_key)] = prob
-    # transition matrix
+    # transition matrix: P(tag | prev_tag)
     # '<ST>' (start of sentence) is a previous tag once per sentence, so
     # P(tag | <ST>) = (sentences starting with tag) / (number of sentences)
     prev_tag_counts = dict(tag_counts)
     prev_tag_counts['<ST>'] = sentence_count
-    for tag_key in prev_tag_counts.keys():
-        for tagTag_key in tagTag_counts.keys():
-            if tag_key == tagTag_key[1]:
-                prob = tagTag_counts[(tagTag_key)] / prev_tag_counts[tag_key]
-                prob = abs(math.log10(prob))
-                transition_matrix[(tag_key,tagTag_key)] = prob
+    for tagTag_key, count in tagTag_counts.items():
+        prev_tag = tagTag_key[1]
+        prob = count / prev_tag_counts[prev_tag]
+        prob = abs(math.log10(prob))
+        transition_matrix[(prev_tag,tagTag_key)] = prob
     return (emission_matrix,transition_matrix)
 
 
@@ -153,10 +131,10 @@ def read_matrix_file(fname: str):
 def hmm_sequence(model_fname: str, txt_fname: str):
     # Use the same vocabulary policy as model training.
     english_vocab = create_vocab(nltk.corpus.brown.tagged_sents())
-    # Load matricies from model
-    matricies = read_matrix_file(model_fname)
-    emission_m = matricies[0]
-    transition_m = matricies[1]
+    # Load matrices from model
+    matrices = read_matrix_file(model_fname)
+    emission_m = matrices[0]
+    transition_m = matrices[1]
     # Get tags from transition matrix
     with open(txt_fname, 'r') as f:
         total_cost = 0 # sum of -log10 probabilities
@@ -198,7 +176,7 @@ def hmm_sequence(model_fname: str, txt_fname: str):
 def hmm_viterbi(model_fname: str, txt_fname: str):
     # Use the same vocabulary policy as model training.
     english_vocab = create_vocab(nltk.corpus.brown.tagged_sents())
-    # Load matricies from model
+    # Load matrices from model
     emission_m, transition_m = read_matrix_file(model_fname)
     # Index emissions by word so each lookup is fast: word -> {tag: cost}
     emissions = {}
