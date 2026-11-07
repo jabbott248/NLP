@@ -110,7 +110,7 @@ Run from inside this folder.
 
   "fish/NN" is a known mistake (it should be fish/VB after can/MD). "fish"
   never appears as a verb in the Brown corpus, and the tagger only
-  considers tags a word was seen with in training. See issue #6.
+  considers tags a word was seen with in training.
 
   Each word is printed as word/TAG; see "Tag reference" below for what the
   tags mean. The probability is P(words, tags) for the best tagging only,
