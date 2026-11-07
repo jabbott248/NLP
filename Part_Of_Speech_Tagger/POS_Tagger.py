@@ -299,9 +299,9 @@ def main():
             print(f"Probability of best tagging: {probability}")
     else:
         print("Usage:")
-        print("  python HMM_POS_Tagger.py                          (builds model_dat.json)")
-        print("  python HMM_POS_Tagger.py <model> <textfile>       (runs hmm_sequence)")
-        print("  python HMM_POS_Tagger.py --tag <model> <textfile> (runs hmm_viterbi)")
+        print("  python POS_Tagger.py                          (builds model_dat.json)")
+        print("  python POS_Tagger.py <model> <textfile>       (runs hmm_sequence)")
+        print("  python POS_Tagger.py --tag <model> <textfile> (runs hmm_viterbi)")
         
    # hmm_model_build()
 

@@ -3,7 +3,7 @@ HMM Part-of-Speech Tagger
 
 What it does
 ------------
-HMM_POS_Tagger.py is a bigram Hidden Markov Model (HMM) part-of-speech tagger
+POS_Tagger.py is a bigram Hidden Markov Model (HMM) part-of-speech tagger
 trained on the Brown corpus (via NLTK). It has three parts:
 
   1. hmm_model_build()  - Reads the tagged Brown corpus and counts:
@@ -31,7 +31,7 @@ trained on the Brown corpus (via NLTK). It has three parts:
 
 Files in this folder
 --------------------
-  HMM_POS_Tagger.py         the script
+  POS_Tagger.py             the script
   model_dat.json            a pre-built model (output of build mode)
   test_tagged_sentence.txt  sample input for sequence mode (word/TAG format)
   test_untagged.txt         sample input for --tag mode (hmm_viterbi)
@@ -61,11 +61,11 @@ directory.
 
   Build the model (overwrites model_dat.json; takes a couple of seconds):
 
-      python3 HMM_POS_Tagger.py
+      python3 POS_Tagger.py
 
   Score a tagged sentence with a model:
 
-      python3 HMM_POS_Tagger.py model_dat.json test_tagged_sentence.txt
+      python3 POS_Tagger.py model_dat.json test_tagged_sentence.txt
 
   Expected output:
 
@@ -79,7 +79,7 @@ directory.
 
   Tag an untagged sentence (one sentence per line):
 
-      python3 HMM_POS_Tagger.py --tag model_dat.json test_untagged.txt
+      python3 POS_Tagger.py --tag model_dat.json test_untagged.txt
 
   Expected output:
 
@@ -404,7 +404,7 @@ Full tag list
 Known Issues
 ============
 These were confirmed by running the script with NLTK 3.10.3 and Python 3.14.
-Line numbers refer to HMM_POS_Tagger.py.
+Line numbers refer to POS_Tagger.py.
 
 Problems that stop it from running
 ----------------------------------
@@ -501,7 +501,7 @@ the best path. Tag pairs never seen in Brown get UNSEEN_COST (probability
     empty file causes NameError on 'tokens'.
 
 12. [FIXED] main() couldn't run it. Use
-    "python3 HMM_POS_Tagger.py --tag model_dat.json file.txt".
+    "python3 POS_Tagger.py --tag model_dat.json file.txt".
 
 Model quality / smaller issues
 ------------------------------
