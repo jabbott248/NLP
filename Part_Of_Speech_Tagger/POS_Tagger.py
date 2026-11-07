@@ -1,7 +1,7 @@
 # Created By Jacob Abbott, 03/15/2022
 import json
 import math
-import re
+import os
 import sys
 from collections import Counter
 
@@ -10,8 +10,20 @@ import nltk
 # Cost (-log10 probability) used for any tag transition or (word, tag) pair
 # that never appears in the Brown corpus. 10 means a probability of 1e-10,
 # rarer than anything the model has seen, so unseen combinations score badly
-# instead of crashing the program.
 UNSEEN_COST = 10
+
+# Model file used by --build, and by --prob / --tag when no model is given
+DEFAULT_MODEL = 'model_dat.json'
+
+USAGE = f"""\
+Usage:
+  python3 POS_Tagger.py --build                    build {DEFAULT_MODEL} from the Brown corpus
+  python3 POS_Tagger.py --prob <textfile> [model]  score a tagged sentence (word/TAG ...)
+  python3 POS_Tagger.py --tag <textfile> [model]   tag untagged text (one sentence per line)
+  python3 POS_Tagger.py --help                     show this message
+
+[model] is optional and defaults to {DEFAULT_MODEL}.
+"""
 
 
 # Takes the brown corpus, and creates emmission and transition
@@ -103,7 +115,7 @@ def write_matrix_to_file(m1: dict, m2: dict):
         'm1': _format_matrix(m1),
         'm2': _format_matrix(m2),
     }
-    with open('model_dat.json', 'w') as f:
+    with open(DEFAULT_MODEL, 'w') as f:
         json.dump(model, f)
         f.write('\n')
     return 0
@@ -150,18 +162,17 @@ def hmm_sequence(model_fname: str, txt_fname: str):
         total_cost = 0 # sum of -log10 probabilities
         prev_tag = '<ST>'
         for line in f:  # file is only one line
-            line = line.strip()
-            tokens = nltk.word_tokenize(line)   
-            for token in tokens:    # for every word/tag pair
-                pattern = re.compile(r'(.+)/(.+)')     # Match word/tag
-                match = re.match(pattern,token)   
-                if match == None:  
+            # The input is already split into word/TAG pairs by spaces.
+            for token in line.split():    # for every word/tag pair
+                # split on the last '/' so words containing '/' still work
+                word, _, tag = token.rpartition('/')
+                if not word or not tag:
+                    print(f"Warning: skipping '{token}' (expected word/TAG)",
+                          file=sys.stderr)
                     continue
-                word = match.group(1)
                 word = word.lower()
                 if not word in english_vocab:
                     word = 'UNK'
-                tag = match.group(2)
                 # Calculate probability of word/tag
                 if (tag,(word,tag)) in emission_m:
                     emission_prob = emission_m[(tag,(word,tag))]
@@ -272,39 +283,58 @@ def download_nltk_data():
                          "Check your internet connection (on macOS, see the "
                          "certificate step in the README) and try again.")
 
+def usage_error(message: str):
+    print(f"Error: {message}\n", file=sys.stderr)
+    print(USAGE, end='', file=sys.stderr)
+    sys.exit(2)
+
+# Checks the text and model files for --prob / --tag and returns their names.
+# The model defaults to DEFAULT_MODEL when it isn't given.
+def parse_file_args(mode: str, args: list):
+    if len(args) not in (1, 2):
+        usage_error(f"{mode} takes a text file and an optional model file")
+    txt_fname = args[0]
+    model_fname = args[1] if len(args) == 2 else DEFAULT_MODEL
+    if not os.path.isfile(txt_fname):
+        sys.exit(f"Error: text file '{txt_fname}' not found.")
+    if not os.path.isfile(model_fname):
+        sys.exit(f"Error: model file '{model_fname}' not found. "
+                 "Run 'python3 POS_Tagger.py --build' to create it.")
+    return txt_fname, model_fname
+
 def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ('-h', '--help'):
+        print(USAGE, end='')
+        return
+
+    mode, rest = args[0], args[1:]
+    # Check the arguments before downloading anything, so mistakes fail fast
+    if mode == '--build':
+        if rest:
+            usage_error("--build takes no arguments")
+    elif mode in ('--prob', '--tag'):
+        txt_fname, model_fname = parse_file_args(mode, rest)
+    else:
+        usage_error(f"unknown option '{mode}'")
+
     # Download required NLTK data if not present
     download_nltk_data()
 
-    # Check command-line arguments
-    if len(sys.argv) == 1:
-        # No arguments: build the model
+    if mode == '--build':
         print("Building HMM model from Brown corpus...")
         hmm_model_build()
-        print("Model saved to model_dat.json")
-    elif len(sys.argv) == 3:
-        # Two arguments: run hmm_sequence
-        model_fname = sys.argv[1]
-        txt_fname = sys.argv[2]
+        print(f"Model saved to {DEFAULT_MODEL}")
+    elif mode == '--prob':
         print(f"Running HMM sequence on {txt_fname} using model {model_fname}")
         result = hmm_sequence(model_fname, txt_fname)
         print(f"Total probability: {result}")
-    elif len(sys.argv) == 4 and sys.argv[1] == '--tag':
-        # --tag <model> <textfile>: tag untagged text with hmm_viterbi
-        model_fname = sys.argv[2]
-        txt_fname = sys.argv[3]
+    else:  # --tag
         print(f"Running HMM Viterbi on {txt_fname} using model {model_fname}")
         for tokens, tags, probability in hmm_viterbi(model_fname, txt_fname):
             print(' '.join(f'{token}/{tag}' for token, tag in zip(tokens, tags)))
             print(f"Probability of best tagging: {probability}")
-    else:
-        print("Usage:")
-        print("  python POS_Tagger.py                          (builds model_dat.json)")
-        print("  python POS_Tagger.py <model> <textfile>       (runs hmm_sequence)")
-        print("  python POS_Tagger.py --tag <model> <textfile> (runs hmm_viterbi)")
-        
-   # hmm_model_build()
 
 
 if __name__ == '__main__':
-   main()
+    main()

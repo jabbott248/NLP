@@ -19,10 +19,12 @@ trained on the Brown corpus (via NLTK). It has three parts:
                           The vocabulary includes NLTK's English word list
                           plus words seen at least twice in Brown. Other
                           words are replaced with the token 'UNK'.
+                          Run it with --build.
 
-  2. hmm_sequence()     - Loads model_dat.json and scores an already-tagged
+  2. hmm_sequence()     - Loads a model and scores an already-tagged
                           sentence (word/TAG word/TAG ...), i.e. how likely
                           that tag sequence is under the model.
+                          Run it with --prob.
 
   3. hmm_viterbi()      - Takes untagged text (one sentence per line) and
                           uses the Viterbi algorithm to find the most likely
@@ -32,9 +34,10 @@ trained on the Brown corpus (via NLTK). It has three parts:
 Files in this folder
 --------------------
   POS_Tagger.py             the script
-  model_dat.json            a pre-built model (output of build mode)
-  test_tagged_sentence.txt  sample input for sequence mode (word/TAG format)
-  test_untagged.txt         sample input for --tag mode (hmm_viterbi)
+  model_dat.json            a pre-built model (output of --build)
+  test_tagged_sentence.txt  sample input for --prob (word/TAG format)
+  test_untagged.txt         sample input for --tag
+  test_untagged_2.txt       another sample input for --tag
 
 Setup
 -----
@@ -56,42 +59,62 @@ Setup
 
 How to run
 ----------
-Run from inside this folder. model_dat.json is always written to the current
-directory.
+Run from inside this folder.
 
-  Build the model (overwrites model_dat.json; takes a couple of seconds):
+  Usage:
 
-      python3 POS_Tagger.py
+      python3 POS_Tagger.py --build                    build model_dat.json from the Brown corpus
+      python3 POS_Tagger.py --prob <textfile> [model]  score a tagged sentence (word/TAG ...)
+      python3 POS_Tagger.py --tag <textfile> [model]   tag untagged text (one sentence per line)
+      python3 POS_Tagger.py --help                     show this message
 
-  Score a tagged sentence with a model:
+  [model] is optional. If you leave it out, the script uses model_dat.json
+  in the current directory. Running the script with no arguments (or with
+  --help) prints the usage message above. If the model file doesn't exist,
+  the script says so and tells you to run --build first.
 
-      python3 POS_Tagger.py model_dat.json test_tagged_sentence.txt
+  Build the model (writes model_dat.json to the current directory,
+  overwriting any existing one; takes a couple of seconds):
+
+      python3 POS_Tagger.py --build
+
+  Score a tagged sentence:
+
+      python3 POS_Tagger.py --prob test_tagged_sentence.txt
+
+  or, with a specific model file:
+
+      python3 POS_Tagger.py --prob test_tagged_sentence.txt model_dat.json
 
   Expected output:
 
       Running HMM sequence on test_tagged_sentence.txt using model model_dat.json
-      Total probability: 1.59524156182099e-75
+      Total probability: 1.016489051401748e-82
 
   Small numbers like this are normal: it's the joint probability of every
   word and tag in a 25-word sentence. Compare scores between taggings of
-  the same sentence; a better tagging gets a higher score. Issue #8 still
-  affects the result.
+  the same sentence; a better tagging gets a higher score.
+
+  The input must be word/TAG pairs separated by spaces. Anything without
+  a word and a tag on both sides of the last '/' is skipped with a warning.
 
   Tag an untagged sentence (one sentence per line):
 
-      python3 POS_Tagger.py --tag model_dat.json test_untagged.txt
+      python3 POS_Tagger.py --tag test_untagged.txt
 
   Expected output:
 
       Running HMM Viterbi on test_untagged.txt using model model_dat.json
-      The/AT Fulton/NP-TL County/NN-TL Grand/JJ-TL Jury/NN-TL said/VBD Friday/NR an/AT investigation/NN of/IN Atlanta/NP 's/NP$ recent/JJ primary/JJ election/NN produced/VBD no/AT evidence/NN that/CS any/DTI irregularities/NNS took/VBD place/NN ./.
-      Probability of best tagging: 2.859351752525453e-78
+      They/PPSS can/MD fish/NN later/RBR in/IN the/AT night/NN when/WRB the/AT moon/NN is/BEZ bright/JJ ./.
+      Probability of best tagging: 9.510200554422562e-34
 
-  Rebuild model_dat.json after changing the tagger so it uses the updated
-  vocabulary. Frequent punctuation and word forms now have their own
-  emissions instead of sharing the 'UNK' emission. The probability is
-  P(words, tags) for the best tagging only, not P(words) summed over all
-  taggings.
+  "fish/NN" is a known mistake (it should be fish/VB after can/MD). "fish"
+  never appears as a verb in the Brown corpus, and the tagger only
+  considers tags a word was seen with in training. See issue #6.
+
+  Each word is printed as word/TAG; see "Tag reference" below for what the
+  tags mean. The probability is P(words, tags) for the best tagging only,
+  not P(words) summed over all taggings.
 
 Tag reference (Brown tagset)
 ----------------------------
@@ -451,6 +474,10 @@ Wrong results / crashes in hmm_sequence()
    This is a fixed default cost, not true smoothing; add-one (Laplace)
    smoothing would spread probability more evenly but makes the model
    file much larger.
+   hmm_viterbi() goes further: for a known word it only considers tags the
+   word was seen with in Brown. "They can fish later..." tags fish/NN
+   instead of fish/VB because "fish" is never a verb in Brown. Fixing this
+   needs real emission smoothing (or a larger training corpus).
 
 7. [FIXED] Start-of-sentence transitions were never saved.
    create_matricies() counted (tag, '<ST>') pairs, but the transition loop
@@ -463,15 +490,19 @@ Wrong results / crashes in hmm_sequence()
    Still to do: there is no end-of-sentence tag, so P(</S> | last tag) is
    not part of the score.
 
-8. The tokenizer breaks tagged input (lines 154-156).
-   nltk.word_tokenize() splits word/TAG tokens on punctuation. With the
-   sample file:
+8. [FIXED] The tokenizer broke tagged input.
+   nltk.word_tokenize() split word/TAG tokens on punctuation. With the
+   sample file, 25 pairs became 31 pieces:
        "Atlanta's/NP$" -> "Atlanta's/NP", "$"   (wrong tag)
        "``/``"         -> "``", "/", "``"       (silently skipped)
+       "''/''"         -> "``", "/", "''"       (silently skipped)
        "./."           -> "./", "."             (silently skipped)
-   The input is already split by spaces, so use line.split(). Use
-   token.rsplit('/', 1) instead of the regex so words that contain '/'
-   still work.
+   so only 22 of the 25 words were scored. The input is already split by
+   spaces, so hmm_sequence() now uses line.split() and splits each pair on
+   its last '/' (token.rpartition('/')), so words that contain '/' (e.g.
+   and/or/CC) still work. Malformed tokens are skipped with a warning
+   instead of silently. The sample score changed from 1.59e-75 to
+   1.02e-82 because all 25 words are now included.
 
 hmm_viterbi() (all fixed)
 -------------------------
@@ -501,7 +532,7 @@ the best path. Tag pairs never seen in Brown get UNSEEN_COST (probability
     empty file causes NameError on 'tokens'.
 
 12. [FIXED] main() couldn't run it. Use
-    "python3 POS_Tagger.py --tag model_dat.json file.txt".
+    "python3 POS_Tagger.py --tag file.txt [model]".
 
 Model quality / smaller issues
 ------------------------------
@@ -522,7 +553,7 @@ Model quality / smaller issues
     reconstructs the same tuple-key dictionaries used by hmm_sequence() and
     hmm_viterbi().
 
-16. Small cleanups: the regexes are compiled inside loops (lines 122 and
-    156), "x in d.keys()" can be "x in d" or collections.Counter, the output
-    path is hard-coded to 'model_dat.json', and "matricies" should be
-    "matrices".
+16. Small cleanups: "x in d.keys()" can be "x in d" or
+    collections.Counter, and "matricies" should be "matrices".
+    (Done: the regexes are gone (#8, #15), and the model file name is a
+    single DEFAULT_MODEL constant.)
