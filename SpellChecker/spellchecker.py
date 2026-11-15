@@ -1,5 +1,5 @@
 # Goal: Create a basic spellchecker
-from typing import List, Tuple
+from typing import Tuple
 import argparse
 import os
 import sys
@@ -70,8 +70,6 @@ def word_exists(root, word: str) -> bool:
 # follow a doubled consonant ("planned" -> "plan", "bigger" -> "big").
 DOUBLE = 'double'
 ENDING_RULES = [
-    ("'s", ['']),               # possessive: people's -> people
-    ("'", ['']),                # plural possessive: citizens' -> citizens
     ('ies', ['y']),             # cities -> city, carries -> carry
     ('ves', ['f', 'fe']),       # selves -> self, knives -> knife
     ('men', ['man']),           # women -> woman, salesmen -> salesman
@@ -100,7 +98,15 @@ IRREGULAR_FORMS = {
     'overheard': 'overhear', 'overthrew': 'overthrow',
     'overthrown': 'overthrow', 'repaid': 'repay',
     'children': 'child', 'feet': 'foot', 'geese': 'goose', 'lice': 'louse',
+    "can't": 'can', "won't": 'will', "shan't": 'shall', "o'clock": 'clock',
 }
+
+# Possessive 's and the endings of contractions, taken off before the
+# other endings: people's -> people, don't -> do, they're -> they,
+# children's -> children (-> child). (A plural possessive like citizens'
+# doesn't need a rule: the apostrophe isn't part of the word, see
+# WORD_PATTERN.)
+CLITICS = ["'s", "n't", "'re", "'ve", "'ll", "'d", "'m"]
 
 # Spelling rules for which stems an ending can follow
 VOWEL_ENDINGS = ('ing', 'ed', 'er', 'est')
@@ -131,17 +137,18 @@ def ending_fits(stem: str, ending: str) -> bool:
     return True
 
 # Returns the possible base forms of a word: what it could be with one
-# ending taken off (after a possessive 's or ', if there is one).
+# ending taken off (after a possessive or contraction ending, if there is
+# one).
 def base_forms(word: str) -> list[str]:
     forms = []
-    if word in IRREGULAR_FORMS:
-        forms.append(IRREGULAR_FORMS[word])
     words = [word]
-    for possessive in ["'s", "'"]:
-        if word.endswith(possessive) and len(word) > len(possessive):
-            words.append(word[:-len(possessive)])
+    for clitic in CLITICS:
+        if word.endswith(clitic) and len(word) > len(clitic):
+            words.append(word[:-len(clitic)])
     for w in words:
-        for ending, replacements in ENDING_RULES[2:]:   # not the possessives
+        if w in IRREGULAR_FORMS:
+            forms.append(IRREGULAR_FORMS[w])
+        for ending, replacements in ENDING_RULES:
             if not w.endswith(ending):
                 continue
             stem = w[:-len(ending)]
@@ -165,7 +172,7 @@ def base_forms(word: str) -> list[str]:
                         forms.append(stem[:-1])
                 else:
                     forms.append(stem + replacement)
-    forms.extend(words[1:])         # the word without its possessive
+    forms.extend(words[1:])         # the word without its 's or n't
     return forms
 
 
@@ -217,41 +224,16 @@ def correct(root, word: str) -> list[str]:
     return suggest(candidates, word)
 
 # creates a pointer to the root of a trie created by all words in a dictionary
-def trie_dict(fname):
-    root = TrieNode('*')
+# (or adds the words to an existing trie, to load several word lists)
+def trie_dict(fname, root=None):
+    if root is None:
+        root = TrieNode('*')
     with open(fname) as f:
         for line in f:
             words = line.split()
             for word in words:
                 insert(root, word)
     return root
-
-def add_punction_to_trie(root):
-    insert(root, ',')
-    insert(root, '.')
-    insert(root, '\\')
-    insert(root, '\'')
-    insert(root, '"')
-    insert(root, '/')
-    insert(root, '?')
-    insert(root, '*')
-    insert(root, '!')
-    insert(root, '@')
-    insert(root, '#')
-    insert(root, '$')
-    insert(root, '%')
-    insert(root, '^')
-    insert(root, '&')
-    insert(root, '(')
-    insert(root, ')')
-    insert(root, '_')
-    insert(root, '-')
-    insert(root, '+')
-    insert(root, '=')
-    insert(root, '~')
-    insert(root, '`')
-    insert(root, ';')
-    insert(root, '—')
 
 # Find candidate replacements for a misspelled word: follow the trie for as
 # long as the word's letters match, then return every dictionary word that
@@ -323,26 +305,49 @@ def suggest(words: list[str], source: str) -> list[str]:
     return [word for dist, word in ret_lst]
 
 # TOKENIZATION
+# Instead of splitting the text into tokens and putting them back together,
+# the words are found in each line where they are, so that everything
+# between them (spaces, punctuation, line breaks) is kept exactly as it was.
+#
+# A word is a run of letters, with apostrophes allowed inside it (he's,
+# don't, o'clock). Everything else separates words: spaces, punctuation,
+# hyphens and dashes ("self-seekers" is checked as "self" and "seekers",
+# "itself—nameless" as "itself" and "nameless"), and full stops ("Mr." is
+# "Mr", "U.S.A." is "U", "S" and "A"). An apostrophe at the start or end of
+# a word is a quote mark, not part of it ('going' is "going"), which also
+# takes the apostrophe off a plural possessive (citizens' -> citizens).
+# The curly apostrophe (’) counts as an apostrophe too.
+#
+# Runs of letters and digits are matched together so that "1930s" or "3rd"
+# isn't split into "s" and "rd"; anything with a digit in it is then
+# skipped (see is_checkable).
+LETTER = r"[^\W_]"     # a letter or digit, in any alphabet
+WORD_PATTERN = re.compile(LETTER + r"+(?:['’]" + LETTER + r"+)*")
+
+def is_checkable(word: str) -> bool:
+    return not any(ch.isdigit() for ch in word)
+
+# Abbreviations that aren't in files/words, accepted when a full stop
+# follows them ("Dr." is fine, "Dr" on its own is checked as a word)
+ABBREVIATIONS = {
+    'Dr', 'St', 'Jr', 'Sr', 'Mt', 'Ave', 'Blvd', 'Prof', 'Gov', 'Sen',
+    'Rep', 'Gen', 'Capt', 'Lt', 'Col', 'Sgt', 'Rev', 'Hon', 'Inc', 'Ltd',
+    'Corp', 'Bros', 'etc', 'vs', 'approx', 'dept', 'esp', 'misc',
+    'Jan', 'Feb', 'Apr', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec',
+}
+
 # param: fname, file name to be read
-# returns: a list of strings containing individual tokens
+# returns: a list of the words in the file, in order (punctuation and
+# numbers are left out)
 def tokenize(fname):
+    tokens = []
     with open(fname) as fp:
-        tokens = []
         for line in fp:
-            # get rid of unambiguous punctuation
-            line = re.sub(r'([\\?!()\";/\\|`])', r' \1 ', line)
-            # seperate out commas unless they're in numbers
-            line = re.sub(r'([^0-9]),', r'\1 , ', line)
-            line = re.sub(r',([^0-9])', r' , \1', line)
-            # distinguish apostrophes from single quotes (single qoutes not preceded by a letter)
-           # line = re.sub(r'([^\'])', r'\1 ', line)
-           # line = re.sub(r"([^A-Za-z0-9])'", r"\1 '", line) # non letter followed by an apostrophe
-            # pull off word-final clitics.
-            # deal with periods at the end of words
-            line = re.sub(r'(.)\.', r'\1 . ', line)
-            tokens.extend(line.split())
+            for match in WORD_PATTERN.finditer(line):
+                if is_checkable(match.group()):
+                    tokens.append(match.group())
     return tokens
-    
+
 # EDIT DISTANCE, from book figure 3.25
 cost_insertion = 1
 cost_deletion = 1
@@ -375,13 +380,21 @@ def edit_dist(s,t):
     # helper code to print out matrices
     # for r in range(rows):
     #   print(dist[r])
-    return dist[row][col]
+    # bottom-right cell: the distance between the whole of s and all of t
+    # (dist[-1][-1] rather than dist[row][col], which don't exist when s or
+    # t is empty and a loop never runs)
+    return dist[-1][-1]
 
 # INTERFACE
 # Folder this script is in, so the default dictionary is found no matter
 # which folder the script is run from
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DICT = os.path.join(SCRIPT_DIR, 'files', 'words')
+# Words from the Brown corpus that files/words doesn't cover (names, modern
+# words like "okay", and common words it is missing like "near"), made by
+# make_brown_words.py
+BROWN_DICT = os.path.join(SCRIPT_DIR, 'files', 'brown_words')
+DEFAULT_DICTS = [DEFAULT_DICT, BROWN_DICT]
 OUTPUT_PREFIX = 'corrected_'
 
 def default_output_name(input_fname):
@@ -405,34 +418,68 @@ def read_text_file(read, fname):
     except UnicodeDecodeError:
         sys.exit("Error: '%s' is not a UTF-8 text file" % fname)
 
-def run(input_fname, output_fname, dict_fname):
-    # root of dictionary
-    root = read_text_file(trie_dict, dict_fname)
-    # add punctuation to dictionary
-    add_punction_to_trie(root)
+# Shows a misspelled word in its line, cut down to CONTEXT characters on
+# each side if the line is long
+CONTEXT = 25
 
-    tokens = read_text_file(tokenize, input_fname)
+def show_in_line(line: str, start: int, end: int) -> str:
+    line = line.rstrip('\n')
+    left = max(0, start - CONTEXT)
+    right = min(len(line), end + CONTEXT)
+    return (('...' if left > 0 else '') + line[left:right].strip()
+            + ('...' if right < len(line) else ''))
+
+# Loads one or more word lists into one trie
+def load_dictionaries(dict_fnames):
+    root = TrieNode('*')
+    for fname in dict_fnames:
+        read_text_file(lambda f: trie_dict(f, root), fname)
+    return root
+
+def run(input_fname, output_fname, dict_fnames):
+    # root of dictionary
+    root = load_dictionaries(dict_fnames)
+    lines = read_text_file(read_lines, input_fname)
+
+    # Go through the text line by line, replacing each misspelled word where
+    # it is, and printing it with its line
+    n_changed = 0
+    corrected_lines = []
+    for line_no, line in enumerate(lines, 1):
+        def fix(match):
+            nonlocal n_changed
+            word = match.group()
+            if not is_checkable(word):
+                return word
+            check = word.replace('’', "'")
+            if is_spelled_correctly(root, check):
+                return word
+            if check in ABBREVIATIONS and line[match.end():match.end() + 1] == '.':
+                return word
+            suggestions = correct(root, check)
+            context = show_in_line(line, match.start(), match.end())
+            if len(suggestions) > 0: # if there is a spell correction:
+                print('Line %i: changing %s to %s' % (line_no, word, suggestions[0]))
+                print('    ' + context)
+                n_changed += 1
+                return suggestions[0]               # write correct spelling
+            print('Line %i: no suggestions for %s' % (line_no, word))
+            print('    ' + context)
+            return word                             # write same word
+        corrected_lines.append(WORD_PATTERN.sub(fix, line))
+
     replacing = os.path.exists(output_fname)
     with open(output_fname, 'w') as f:
-        for word in tokens:
-            if is_spelled_correctly(root, word):
-                f.write(word + ' ')
-            else:
-                suggestions = correct(root, word)
-                if len(suggestions) > 0: # if there is a spell correction:
-                    print('Changing %s to %s'%(word,suggestions[0]))    # prints word and line
-                    f.write(suggestions[0] + ' ')                             # write correct spelling
-                else:
-                    print('No suggestions for: %s'%(word))              # print no correction found
-                    f.write(word + ' ')                                       # write same word
-    print('Saved the corrected text to %s%s.'
-          % (output_fname, ' (replaced the old file)' if replacing else ''))
+        f.writelines(corrected_lines)
+    print('Changed %i word%s.' % (n_changed, '' if n_changed == 1 else 's'))
+    if replacing:
+        print('Replaced %s with the corrected text.' % output_fname)
+    else:
+        print('Saved the corrected text to %s.' % output_fname)
 
-    # put the file back together using regex
-
-    # load a file whose name is given as a command-line argument.
-    # look for words that are incorrectly spelled. prints out the line that the word appeared in
-    # save its corrected version to a new file with the prefix `corrected_`.
+def read_lines(fname):
+    with open(fname) as f:
+        return f.readlines()
 
 def interface():
     parser = argparse.ArgumentParser(
@@ -446,7 +493,7 @@ def interface():
                '  python3 spellchecker.py files/short1.txt -o out.txt  '
                '-> out.txt\n'
                '  python3 spellchecker.py files/short1.txt -d mywords  '
-               'check against the words in mywords',
+               'check against the words in mywords only',
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('input', metavar='TEXTFILE',
                         help='text file to check')
@@ -455,10 +502,12 @@ def interface():
                              'the input file\'s name with %s in front, in '
                              'the same folder as the input). An existing '
                              'file is replaced.' % OUTPUT_PREFIX)
-    parser.add_argument('-d', '--dict', metavar='WORDLIST', dest='dict_fname',
-                        help='dictionary to check against, one word per line '
-                             '(default: files/words in this script\'s '
-                             'folder)')
+    parser.add_argument('-d', '--dict', metavar='WORDLIST', dest='dict_fnames',
+                        action='append',
+                        help='word list to check against, one word per line. '
+                             'Give -d more than once to use several lists '
+                             '(default: files/words and files/brown_words '
+                             'in this script\'s folder)')
     if len(sys.argv) == 1:
         parser.print_help()
         return
@@ -468,16 +517,18 @@ def interface():
     output_fname = args.output
     if output_fname is None:
         output_fname = default_output_name(input_fname)
-    dict_fname = args.dict_fname
-    if dict_fname is None:
-        dict_fname = short_path(DEFAULT_DICT)
+    dict_fnames = args.dict_fnames
+    if dict_fnames is None:
+        dict_fnames = [short_path(f) for f in DEFAULT_DICTS]
 
     # Check the files before doing any work, so mistakes fail fast
     if not os.path.isfile(input_fname):
         parser.error("input file '%s' not found" % input_fname)
-    if not os.path.isfile(dict_fname):
-        parser.error("dictionary '%s' not found" % dict_fname)
-    for other, what in [(input_fname, 'input'), (dict_fname, 'dictionary')]:
+    for dict_fname in dict_fnames:
+        if not os.path.isfile(dict_fname):
+            parser.error("dictionary '%s' not found" % dict_fname)
+    for other, what in ([(input_fname, 'input')]
+                        + [(d, 'dictionary') for d in dict_fnames]):
         if os.path.abspath(output_fname) == os.path.abspath(other):
             parser.error("output file '%s' is the same as the %s file"
                          % (output_fname, what))
@@ -486,34 +537,7 @@ def interface():
         parser.error("folder '%s' for the output file does not exist"
                      % output_dir)
 
-    run(input_fname, output_fname, dict_fname)
-
-def test_trie():
-    root = trie_dict(DEFAULT_DICT)
-    print(len(root.children))
-    print(str(word_exists(root, 'abondon')))
-
-def test_edit_distance(x,y):
-    dist = edit_dist(x,y)
-    print(dist)
-
-
-def test_find_similar_words():
-    root = trie_dict('words')
-    example_word = 'abondon'
-    if word_exists(root, example_word):
-        print('word exists')
-        return []
-    else:
-        res = get_similar_words(root, example_word)
-        for word in res:
-            print(word)
-        return res
-
-def test_tokenize():
-    ret = tokenize('test_tokenize.txt')
-    for word in ret:
-        print(word)
+    run(input_fname, output_fname, dict_fnames)
 
 if __name__ == "__main__":
     interface()

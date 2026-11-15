@@ -1,6 +1,7 @@
 # Install with: pip3 install -r requirements.txt
 
-# Part_Of_Speech_Tagger, Author_Language_Model
+# Part_Of_Speech_Tagger, Author_Language_Model, and SpellChecker's
+# make_brown_words.py
 nltk>=3.10.3
 
 # Audio_Spectrogram (pillow is used by its tests)
