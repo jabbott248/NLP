@@ -1,9 +1,9 @@
 # Install with: pip3 install -r requirements.txt
 
-# Part_Of_Speech_Tagger, Author_Language_Model, Audio_Spectrogram
+# Part_Of_Speech_Tagger, Author_Language_Model
 nltk>=3.10.3
 
-# Audio_Spectrogram
+# Audio_Spectrogram (matplotlib is only for its --plot option)
 numpy
 matplotlib
 pillow

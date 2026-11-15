@@ -24,8 +24,6 @@ Then download the NLTK data used by the scripts:
 
     python3 -c "import nltk; [nltk.download(p) for p in ('brown','words','punkt','punkt_tab')]"
 
-The spectrogram viewer also needs tkinter, which pip can't install. It comes with the python.org installer; with Homebrew Python, run "brew install python-tk".
-
 Best,
 
 Jake Abbott
