@@ -8,7 +8,7 @@ data cleaning methods you employed:
 information is in Language Models (bigrams, trigrams, etc):
     Bigrams only
 method of smoothing you are using:
-    Good-Touring Smoothing
+    Good-Turing smoothing with Katz backoff (unigram Good-Turing for unseen words)
 No other tweaks were made
 """
 
@@ -17,14 +17,24 @@ import re
 from tokenize import Double
 import nltk
 import math
+from collections import Counter
+
+# Good-Turing adjusted counts are only used for bigram counts below this.
+# Above it the raw count is used: Good-Turing estimates get unreliable
+# for large counts, where N_(c+1) is often 0 or very noisy.
+GT_MAX_COUNT = 5
 
 # Language model to pass to methods to calculate probabilities
 class LanguageModel():
     def __init__(self, author: str):
         self.unigrams = {}
         self.bigrams = {}
-        self.frequencies = {}
-        self.unknown_unigram = 1
+        self.frequencies = {}       # N_c: number of bigrams seen exactly c times
+        self.total_words = 0
+        self.unknown_unigram = 1    # P(word) for each word never seen in training
+        self.seen_word_share = 1    # total P(word) shared by the words seen in training
+        self.context_counts = {}    # prev_word -> number of bigrams starting with it
+        self.backoff_weight = {}    # prev_word -> Katz backoff weight alpha
         self.author = author
 
     def create_lm(self, fname: str):
@@ -47,22 +57,71 @@ class LanguageModel():
                         self.bigrams[(prev_token, token)] += 1
                     else:
                         self.bigrams[(prev_token, token)] = 1
-                    # update frequencies
-                    if self.bigrams[(prev_token, token)] in self.frequencies.keys():
-                        self.frequencies[self.bigrams[(prev_token, token)]] += 1
-                    else:
-                        self.frequencies[self.bigrams[(prev_token, token)]] = 1
                     # update the previous token for bigram counts
                     prev_token = token
 
-        total_words = len(tokens)
-        self.frequencies[1] = 1 # In case no words with frequncy 1 appear in a senetence
-        self.frequencies[0] = self.frequencies[1] / total_words
-        one_count_unigrams = 0
-        for key in self.unigrams.keys():
-            if self.unigrams[key] == 1:
-                one_count_unigrams = one_count_unigrams + 1
-        self.unknown_unigram = one_count_unigrams / total_words
+        # includes the '' start token, so unigram probabilities add up to 1
+        self.total_words = sum(self.unigrams.values())
+        # N_c: how many different bigrams were seen exactly c times. This is
+        # computed once counting is finished, so each bigram is counted
+        # under its final count only.
+        self.frequencies = Counter(self.bigrams.values())
+
+    # Works out the smoothed probabilities. Call this after create_lm(), once
+    # every author's model has been built:
+    #   vocab_size: number of distinct words across all authors' text, plus
+    #               1 for words that none of them used
+    # The vocabulary has to be shared so that every model splits its
+    # probability for unseen words over the same set of words.
+    def smooth(self, vocab_size: int):
+        # Good-Turing for unigrams: the share of tokens that were seen only
+        # once (N_1 / N) estimates the total probability of all the words
+        # this author never used. It is split evenly between those words.
+        one_count_unigrams = sum(1 for count in self.unigrams.values() if count == 1)
+        unseen_mass = max(one_count_unigrams, 1) / self.total_words
+        unseen_words = max(vocab_size - len(self.unigrams), 1)
+        self.seen_word_share = 1 - unseen_mass
+        self.unknown_unigram = unseen_mass / unseen_words
+
+        # Katz backoff. Good-Turing lowers each seen bigram's count from c to
+        # c*, which frees up some probability after every prev_word. That
+        # leftover is shared among the words never seen after prev_word, in
+        # proportion to their unigram probability, so that P(w | prev_word)
+        # adds up to 1 over all words w.
+        context_counts = Counter()      # Count(prev_word) as a bigram start
+        discounted_counts = Counter()   # sum of c* over words seen after it
+        seen_unigram_mass = Counter()   # sum of P(w) over words seen after it
+        for (prev_word, word), c in self.bigrams.items():
+            context_counts[prev_word] += c
+            discounted_counts[prev_word] += self.gt_adjusted_count(c)
+            seen_unigram_mass[prev_word] += self.unigram_prob(word)
+        unseen_share = self.frequencies[1] / sum(self.bigrams.values())
+        for prev_word, total in context_counts.items():
+            leftover = 1 - discounted_counts[prev_word] / total
+            if leftover <= 0:
+                # Every word after prev_word was seen GT_MAX_COUNT or more
+                # times, so nothing was discounted. Use Good-Turing's overall
+                # share for unseen bigrams (N_1 / N) so they don't get 0.
+                leftover = unseen_share
+            self.backoff_weight[prev_word] = leftover / (1 - seen_unigram_mass[prev_word])
+        self.context_counts = context_counts
+
+    # Good-Turing adjusted count c* = (c + 1) * N_(c+1) / N_c for a bigram
+    # seen c times (c >= 1)
+    def gt_adjusted_count(self, c: int):
+        n_c = self.frequencies[c]
+        n_c1 = self.frequencies[c + 1]
+        if c >= GT_MAX_COUNT or n_c1 == 0:
+            return c        # large or gappy counts: keep the raw count
+        return (c + 1) * n_c1 / n_c
+
+    # P(word) on its own. Seen words share seen_word_share in proportion to
+    # their counts, and each unseen word gets unknown_unigram, so all words
+    # in the vocabulary together add up to 1.
+    def unigram_prob(self, word: str):
+        if word in self.unigrams:
+            return self.seen_word_share * self.unigrams[word] / self.total_words
+        return self.unknown_unigram
 
 
 # Calculate probability that wn given wn-1 in a text file
@@ -91,38 +150,24 @@ def get_prob_of_w(fname: str, w0: str, w1: str):
 
 
 # Returns P(word | prev_word): the probability that word comes right after
-# prev_word, using lm's bigram counts with Good-Turing smoothing.
+# prev_word, using lm's bigram counts with Good-Turing smoothing and Katz
+# backoff:
+#   - seen bigram:   P = c* / Count(prev_word), where c* is the bigram's
+#                    Good-Turing adjusted count
+#   - unseen bigram: P = alpha(prev_word) * P(word), where alpha shares out
+#                    the probability Good-Turing took from the seen bigrams
+#   - prev_word never seen in training: P = P(word)
 #   lm:        the author's language model to use
 #   word:      the current word
 #   prev_word: the word before it ('' at the start of a line)
-# Note: the result is not always a valid probability (it can be above 1);
-# see Known Issues #4 and #5 in classifier_README.txt.
 def gt_get_prob_of_w(lm: LanguageModel, word: str, prev_word: str):
-    # Account for key Error in bigrams and frequincies, if no key then sub N(1)/N
-    if (prev_word,word) in lm.bigrams.keys():                   # if the bigram has count 1 or greater
-        c = lm.bigrams[(prev_word,word)]+1
-    else:                                                       # if the bigram has a zero count
-        c_star = lm.frequencies[1] / len(lm.unigrams.keys())
-        if prev_word in lm.unigrams.keys():
-            return c_star / lm.unigrams[prev_word]
-        else:
-            return c_star / lm.unknown_unigram
-
-    # Check bigram frequency exists
-    try:
-        n_c1 = lm.frequencies[lm.bigrams[(prev_word,word)]+1]
-        n_c = lm.frequencies[lm.bigrams[(prev_word,word)]]
-        c_star = c * n_c1 / n_c
-    except(KeyError):
-        #print('KEY ERROR')
-        c_star = c
-
-    if prev_word in lm.unigrams.keys():
-        prob = c_star / lm.unigrams[prev_word]
-    else:
-        prob = c_star / 1
-
-    return prob
+    prev_count = lm.context_counts.get(prev_word, 0)
+    if prev_count == 0:
+        return lm.unigram_prob(word)
+    c = lm.bigrams.get((prev_word, word), 0)
+    if c > 0:
+        return lm.gt_adjusted_count(c) / prev_count
+    return lm.backoff_weight[prev_word] * lm.unigram_prob(word)
 
 # Scores a sentence with lm. Returns its cost: the sum of -log10
 # P(word | prev_word) over every word. Lower cost = more likely, so the
@@ -180,6 +225,16 @@ def test_get_prob_of_w():
 
 
 
+# Smooths every model using one vocabulary shared by all of them: every word
+# in any author's text, plus 1 for words that none of them used.
+def smooth_models(models: list):
+    vocab = set()
+    for lm in models:
+        vocab.update(lm.unigrams)
+    for lm in models:
+        lm.smooth(len(vocab) + 1)
+
+
 # No test flag
 # automatically extract a development from the author data, then train on the remaining training data
 def run_no_test_flag(authorlist: str):
@@ -217,6 +272,7 @@ def run_no_test_flag(authorlist: str):
         #print('New Model name: %s'%new_model.author)
         new_model.create_lm(text)
         models.append(new_model)
+    smooth_models(models)
 
     # Test language models on training_texts
     for fname in training_txt_fnames:
@@ -227,6 +283,10 @@ def run_no_test_flag(authorlist: str):
 
         with open(fname, 'r') as training_txt:
             for line in training_txt:
+                # Blank lines have no words to score, so every model would
+                # tie at a cost of 0. Skip them instead of counting a guess.
+                if not line.strip():
+                    continue
                 lowest_cost = math.inf   # lowest cost = most likely author
                 author = ''
                 for lm in models:
@@ -258,12 +318,16 @@ def run_with_test_flag(authorlist: str, test_fname: str):
         new_model = LanguageModel(author=fname)
         new_model.create_lm(fname)
         models.append(new_model)
+    smooth_models(models)
 
     # Test each language model on the fname
     with open(test_fname, 'r') as f:
-        count = 1
-        for line in f:
+        # count is the line number in the file, so the output still lines up
+        # with the input when blank lines are skipped
+        for count, line in enumerate(f, start=1):
             line = line.strip()
+            if not line:    # blank line: nothing to classify
+                continue
             lowest_cost = math.inf   # lowest cost = most likely author
             author = ''
             for lm in models:
@@ -273,7 +337,6 @@ def run_with_test_flag(authorlist: str, test_fname: str):
                     author = lm.author
 
             print('Line %i: %s'%(count, author))
-            count+=1
 
 def interface():
     # check for correct number of command line arguments
