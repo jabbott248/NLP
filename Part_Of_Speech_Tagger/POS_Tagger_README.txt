@@ -106,6 +106,44 @@ Files in this folder
   test_tagged_sentence.txt  sample input for --prob (word/TAG format)
   test_untagged.txt         sample input for --tag
   test_untagged_2.txt       another sample input for --tag
+  test_POS_Tagger.py        tests (see "Running the tests")
+
+Running the tests
+-----------------
+From inside this folder:
+
+      python3 -m unittest test_POS_Tagger
+
+  (or run the file with python3). test_POS_Tagger.py has 31 tests and
+  takes about 6 seconds.
+
+  Most swap the Brown corpus and NLTK's word list for a made-up corpus
+  of 4 sentences, so every count, probability and best tagging can be
+  worked out by hand: the vocabulary (lower-casing, words seen twice,
+  'UNK'), the emission and transition costs and that each table's
+  probabilities add up to 1, the <ST> start transitions, writing and
+  reading model_dat.json, scoring tagged sentences (unknown words,
+  unseen tags and transitions, malformed tokens, words containing '/'),
+  and the command-line checks. viterbi_tag() is checked on hand-made
+  examples, including one where picking each word's cheapest tag on its
+  own gives the wrong answer, and against trying every possible tagging
+  on 30 small random models.
+
+  The rest use the real Brown corpus and the saved model: they run
+  --prob and --tag on the sample files and check the output shown in
+  "How to run", and check that --build (run in a temporary folder)
+  makes a model with the same contents as model_dat.json. The saved
+  model is pretty-printed and --build writes compact JSON, so the bytes
+  differ but the tables are identical. These tests need NLTK's brown,
+  words and punkt data, and are skipped with a message if it's missing.
+
+  To check that the tests catch real mistakes, bugs were put into the
+  script one at a time: the wrong <ST> denominator, no lower-casing in
+  training, keeping words seen once, transitions divided by the wrong
+  count, splitting word/TAG on the first '/', no 'UNK' fallback in
+  --prob, transitions indexed backwards, Viterbi taking the most
+  expensive previous tag, a broken traceback, and blank lines not being
+  skipped. Each one made at least one test fail.
 
 Tag reference (Brown tagset)
 ----------------------------

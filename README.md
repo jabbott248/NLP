@@ -57,11 +57,12 @@ python3 -c "import nltk; [nltk.download(p) for p in ('brown', 'words', 'punkt', 
 
 ### 5. Check that everything works
 
-Each project with tests can be checked from its own folder:
+Each project's tests can be run from its own folder:
 
 ```bash
 (cd SpellChecker && python3 -m unittest)            # 49 tests, about 5 s
 (cd Author_Language_Model && python3 -m unittest)   # 62 tests, about 13 s
+(cd Part_Of_Speech_Tagger && python3 -m unittest)   # 31 tests, about 6 s
 (cd Audio_Spectrogram && python3 -m unittest)       # 49 tests, about 5 s
 ```
 
