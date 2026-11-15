@@ -3,15 +3,14 @@ Audio Spectrogram
 
 What it does
 ------------
-spectrogram.py is meant to read a .wav file of speech and draw it as a
+spectrogram.py reads a .wav file of speech and draws it as a
 spectrogram: an image where time runs left to right, frequency runs bottom
 to top, and the darkness of each pixel shows how much energy the sound has
 at that time and frequency. White means no energy and black means the most.
 
-It isn't finished. The script reads the audio, cuts it into windows and
-runs a Fourier transform on each one, but the last step, turning those
-numbers into an image (create_spectrogram), was never written. Right now
-it doesn't produce any image or output. See "Known issues".
+It runs and saves an image, but the image isn't right yet: the steps
+before the drawing still have bugs, so the picture is mirrored top to
+bottom, too narrow, and low in contrast. See "Known issues" 3-5.
 
 How it works
 ------------
@@ -55,11 +54,20 @@ does something different (see "Known issues" for details).
    400 bins in one long list (Known issue 5).
 
 5. Draw the image (create_spectrogram)
-   Not written yet. The plan in the comments: one pixel column per window
-   (10 ms), one pixel row per frequency bin, and each pixel's darkness set
-   from its decibel value, with white for the lowest and black for the
-   highest. For sa1.wav that would be an image about 340 pixels wide and
-   201 pixels high.
+   The flat list from transform() is cut back into one row per window and
+   turned on its side, so each window is one pixel column (10 ms) and each
+   frequency bin is one pixel row. Image rows count from the top (row 0
+   is the top of the picture) but low frequencies belong at the bottom,
+   so the rows are flipped: bin k goes to row (height - 1 - k).
+
+   The decibel values are scaled to shades of grey, with the lowest value
+   in the file white (255) and the highest black (0), and Pillow saves the
+   result. The image format comes from the output file's extension (.png,
+   .jpg, ...).
+
+   Once issues 3-5 are fixed, sa1.wav will give an image 340 pixels wide
+   and 201 high. For now it is 227 x 400, with the bottom half mirrored
+   on top (see Known issue 5).
 
 Files in this folder
 --------------------
@@ -67,7 +75,8 @@ Files in this folder
   image.py         a small image library given with the assignment (Brad
                    Miller, Luther College). It wraps Pillow and tkinter
                    so pixels can be set one at a time and the image
-                   shown in a window or saved to a file.
+                   shown in a window or saved to a file. spectrogram.py
+                   no longer uses it; it draws with Pillow directly.
   dr1/             three sample recordings with their transcripts. They
                    appear to be from the TIMIT speech corpus (dialect
                    region 1).
@@ -85,44 +94,76 @@ Files in this folder
 Setup
 -----
 Follow the setup in the top-level README.md (install requirements.txt).
-The script imports numpy, matplotlib, nltk and image.py, and image.py
-uses Pillow and tkinter. (nltk is imported but never used; see Known issue
-10.)
+The script imports numpy, matplotlib, nltk and Pillow. (nltk is
+imported but never used; see Known issue 10.)
 
 How to run
 ----------
-Run from inside this folder:
+      python3 spectrogram.py [WAVFILE] [-o IMAGEFILE]
 
-      python3 spectrogram.py
+  WAVFILE        the .wav file to read. If left out, dr1/sa1.wav in the
+                 script's folder is used, so the script can be run from
+                 any folder.
+  -o IMAGEFILE   where to save the image. If left out, it's the input
+                 file's name with _spectrogram.png on the end, in the
+                 same folder as the input.
+  -h             show the help message.
 
-It takes no arguments. It is supposed to open dr1/sa1.wav, but it looks
-for /dr1/sa1.wav (at the root of the disk) and crashes:
+Examples:
 
-      FileNotFoundError: [Errno 2] No such file or directory: '/dr1/sa1.wav'
+      python3 spectrogram.py                      dr1/sa1.wav
+                                                  -> dr1/sa1_spectrogram.png
+      python3 spectrogram.py dr1/si836.wav        dr1/si836.wav
+                                                  -> dr1/si836_spectrogram.png
+      python3 spectrogram.py dr1/si836.wav -o a.png
+                                                  dr1/si836.wav -> a.png
 
-With the path fixed, steps 1-4 run on sa1.wav in well under a second,
-and then the results are thrown away. Nothing is printed, shown or
-saved.
+It takes about half a second for sa1.wav:
+
+      $ python3 spectrogram.py
+      Read 54682 samples from dr1/sa1.wav.
+      Saved a 227 x 400 pixel spectrogram to dr1/sa1_spectrogram.png.
+
+The other two recordings give 280 x 400 (si1466.wav) and 286 x 400
+(si836.wav) images. Until Known issues 3-5 are fixed, every image is
+about 2/3 as wide as it should be, twice as tall, and has the bottom
+half mirrored on top.
+
+A missing input file, an output folder that doesn't exist, an output
+file without an image extension, or an output file that is the same as
+the input stops the script with a short error
+before any work is done:
+
+      $ python3 spectrogram.py nope.wav
+      usage: spectrogram.py [-h] [-o IMAGEFILE] [WAVFILE]
+      spectrogram.py: error: input file 'nope.wav' not found
+
+A file that isn't a .wav file gives:
+
+      $ python3 spectrogram.py dr1/sa1.txt
+      Error: 'dr1/sa1.txt' is not a .wav file (file does not start with RIFF id)
+
+and a file shorter than one 25 ms window (400 samples) stops with
+"is too short to draw".
 
 Known issues
 ------------
 Found by running the script and each of its functions on the three
 recordings in dr1/.
 
- 1. No spectrogram is produced. create_spectrogram() is a stub that
-    returns 1, and test_wave_read() (the function main() calls) never
-    calls it. It computes the Fourier transform and then discards it.
+ 1. [FIXED] No spectrogram was produced. create_spectrogram() was a stub
+    that returned 1, and nothing called it. It now draws the image with
+    Pillow and saves it to the output file, with low frequencies at the
+    bottom (bin k goes to row height - 1 - k). It draws whatever
+    transform() gives it, so issues 3-5 still show in the picture.
 
-    A note for when it's written: image rows count from the top (row 0 is
-    the top of the picture), but a spectrogram has low frequencies at the
-    bottom. If frequency bin k goes to row k, the image comes out upside
-    down. Bin k should go to row (height - 1 - k).
-
- 2. The input file is hard-coded as '/dr1/sa1.wav'. The leading slash
-    makes it an absolute path, so the file is never found and the script
-    crashes (see "How to run"). There is also no way to choose the input
-    file or where the image is saved; there are no command-line arguments
-    and no output file.
+ 2. [FIXED] The input file was hard-coded as '/dr1/sa1.wav'. The leading
+    slash made it an absolute path, so the file was never found and the
+    script crashed. There was also no way to choose the input file or
+    where the image is saved. The script now takes the input file and an
+    -o output file on the command line (see "How to run"), defaults to
+    dr1/sa1.wav found relative to the script, and checks the files
+    before doing any work.
 
  3. Windows start every 15 ms instead of every 10 ms. create_windows()
     collects 400 samples and then steps back 160, so each window starts
@@ -209,18 +250,19 @@ recordings in dr1/.
         The x-axis is the point number, not time, and the title is
         "Plotting 1-D array". It's the only thing matplotlib is used for.
 
-12. image.py, the library given with the assignment:
-      - It opens a hidden tkinter window as soon as it's imported, so the
-        script needs a display even just to save an image. It works on a
-        normal desktop but would fail over SSH or on a server.
+12. image.py, the library given with the assignment. spectrogram.py no
+    longer imports it (it draws with Pillow, see issue 1), so these only
+    matter if it is used again:
+      - It opens a hidden tkinter window as soon as it's imported, so a
+        script using it needs a display even just to save an image. It
+        works on a normal desktop but would fail over SSH or on a server.
       - ListImage (build an image from a list of lists) is broken:
         it calls Pixel() with one argument instead of three and raises
         "TypeError: Pixel.__init__() missing 2 required positional
         arguments: 'green' and 'blue'".
       - Its own demo (python3 image.py) needs lcastle.ppm, which isn't
         here.
-    EmptyImage, setPixel and save all work, which is enough to draw a
-    spectrogram. Pillow on its own (Image.fromarray) could do the same
-    thing faster without image.py.
+    EmptyImage, setPixel and save all work. It could be deleted from the
+    folder now, or kept as part of the original assignment.
 
 13. There are no tests.

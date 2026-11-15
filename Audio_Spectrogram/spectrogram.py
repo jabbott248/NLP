@@ -2,16 +2,17 @@
 ### Spectrogram: Take a .wav file and print out a spectrogram image of the file
 
 from cmath import cos, log10
+import argparse
 import cmath
 import math
+import os
+import sys
 import nltk
 import wave
 import numpy as np
 import struct
 import matplotlib.pyplot as plt
-
-# image library given to us
-import image
+from PIL import Image
 
 ## Get raw data out of .wav file, using pythons wave library
 # .wav formats are 1 channel, 16-bit samples, and a 16,000 Hz sample rate.
@@ -124,28 +125,120 @@ def transform(windows):
     return output
 
 
-## Plot the data points :)
-# Each 10ms window is 1 pixel of width - each freq is 1 pixel
-# frequency along the y-axis and intensity indicated by the darkness of the pixel
-# white means 0 intensity and black means maximum
-def create_spectrogram(data):
-    ## TODO: finish this final part
-    return 1
+## Draw the spectrogram image
+# Each window (column) is 1 pixel of width and each frequency bin is 1 pixel
+# of height. Frequency runs up the y-axis and intensity is shown by the
+# darkness of the pixel: white means the lowest value and black the highest.
+#
+# data is the flat list from transform(), n_windows values at a time, so it
+# is cut back into one row per window first.
+def create_spectrogram(data, n_windows, output_fname):
+    values = np.array(data, dtype=float).reshape(n_windows, -1)
+    # rows = frequency bins, columns = windows (time)
+    values = values.T
+    # Image row 0 is the top of the picture, but low frequencies belong at
+    # the bottom, so flip it: bin k goes to row (height - 1 - k)
+    values = np.flipud(values)
+
+    # Scale the decibel values to shades: lowest -> 255 (white),
+    # highest -> 0 (black)
+    low, high = values.min(), values.max()
+    if high > low:
+        shades = 255 * (high - values) / (high - low)
+    else:
+        shades = np.full(values.shape, 255.0)   # every value is the same
+    pixels = np.round(shades).astype(np.uint8)
+
+    img = Image.fromarray(pixels)   # 2-D array of 0-255 -> greyscale image
+    try:
+        img.save(output_fname)
+    except (ValueError, OSError) as e:
+        # e.g. no permission to write there
+        sys.exit("Error: could not save '%s' (%s)" % (output_fname, e))
+    return img
 
 
-# load an all white image that is x pixels long, and y pixels high. x? y?
-# loop through log_scale data and manipulate pixel by pixel
+# Folder this script is in, so the default input is found no matter which
+# folder the script is run from
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_INPUT = os.path.join('dr1', 'sa1.wav')
+OUTPUT_SUFFIX = '_spectrogram'
+OUTPUT_EXT = '.png'
 
-## to test, Write a visual output that will plot the sample value at each frame and create a graph of the sound over time. 
-def test_wave_read():
-    data = get_wave_data('/dr1/sa1.wav') # may need to scale this data -1 to 1
+def default_output_name(input_fname):
+    # dr1/sa1.wav -> dr1/sa1_spectrogram.png (saved next to the input)
+    base, _ = os.path.splitext(input_fname)
+    return base + OUTPUT_SUFFIX + OUTPUT_EXT
+
+def run(input_fname, output_fname):
+    data = get_wave_data(input_fname) # may need to scale this data -1 to 1
     windows = create_windows(data)
     hamm_windows(windows)
+    if len(windows) == 0:
+        sys.exit("Error: '%s' is too short to draw (%i samples; one window "
+                 "needs 400)" % (input_fname, len(data)))
     ft_windows = transform(windows)
+    img = create_spectrogram(ft_windows, len(windows), output_fname)
+    print('Read %i samples from %s.' % (len(data), input_fname))
+    print('Saved a %i x %i pixel spectrogram to %s.'
+          % (img.width, img.height, output_fname))
+
+def interface():
+    parser = argparse.ArgumentParser(
+        prog='spectrogram.py',
+        description='Draw a spectrogram image of a .wav file of speech\n'
+                    '(16-bit mono audio, like the files in dr1/).',
+        epilog='examples:\n'
+               '  python3 spectrogram.py                        '
+               'dr1/sa1.wav -> dr1/sa1_spectrogram.png\n'
+               '  python3 spectrogram.py dr1/si836.wav          '
+               'dr1/si836.wav -> dr1/si836_spectrogram.png\n'
+               '  python3 spectrogram.py dr1/si836.wav -o a.png '
+               'dr1/si836.wav -> a.png',
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('input', nargs='?', metavar='WAVFILE',
+                        help='.wav file to read (default: %s in this '
+                             'script\'s folder)' % DEFAULT_INPUT)
+    parser.add_argument('-o', '--output', metavar='IMAGEFILE',
+                        help='where to save the image (default: the input '
+                             'file\'s name with %s%s on the end, in the '
+                             'same folder as the input)'
+                             % (OUTPUT_SUFFIX, OUTPUT_EXT))
+    args = parser.parse_args()
+
+    input_fname = args.input
+    if input_fname is None:
+        # Show a short path if run from inside this folder or the repo,
+        # and the full path otherwise
+        input_fname = os.path.join(SCRIPT_DIR, DEFAULT_INPUT)
+        cwd = os.getcwd()
+        if os.path.commonpath([cwd, input_fname]) == cwd:
+            input_fname = os.path.relpath(input_fname)
+    output_fname = args.output
+    if output_fname is None:
+        output_fname = default_output_name(input_fname)
+
+    # Check the files before doing any work, so mistakes fail fast
+    if not os.path.isfile(input_fname):
+        parser.error("input file '%s' not found" % input_fname)
+    if os.path.abspath(output_fname) == os.path.abspath(input_fname):
+        parser.error("output file '%s' is the same as the input file"
+                     % output_fname)
+    ext = os.path.splitext(output_fname)[1].lower()
+    if ext not in Image.registered_extensions():
+        parser.error("output file '%s' needs an image extension such as "
+                     ".png or .jpg" % output_fname)
+    output_dir = os.path.dirname(output_fname)
+    if output_dir and not os.path.isdir(output_dir):
+        parser.error("folder '%s' for the output file does not exist"
+                     % output_dir)
+
+    try:
+        run(input_fname, output_fname)
+    except (wave.Error, EOFError) as e:
+        sys.exit("Error: '%s' is not a .wav file (%s)" % (input_fname, e))
 
 
-def main():
-   test_wave_read()
 
 if __name__ == '__main__':
-   main()
+    interface()
