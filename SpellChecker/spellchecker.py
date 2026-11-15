@@ -1,5 +1,7 @@
 # Goal: Create a basic spellchecker
 from typing import List, Tuple
+import argparse
+import os
 import sys
 import re
 
@@ -96,14 +98,18 @@ def add_punction_to_trie(root):
     insert(root, ';')
     insert(root, '—')
 
-# notes
+# Find candidate replacements for a misspelled word: follow the trie for as
+# long as the word's letters match, then return every dictionary word that
+# starts with the part that matched (including that part itself, if it is a
+# word). For "wioll", "wi" matches, so the candidates are "wi" words; for
+# "abandonx" they are "abandon" and every word starting with it.
 def get_similar_words(root, word: str) -> list[str]:
     # follow tree as far as possible with prefixes that do exist
     cur_node = root  # pointer to the root of the trie
     prefix = ''
     if not root.children:   # If the root has no children, trie is empty so the prefix does not exist
         return []           # return the empty array
-    
+
     for char in word:                       # iterate through each charcter of the input word
         char_not_found = True
         for child in cur_node.children:     # iterate through each child of current char's child
@@ -113,46 +119,53 @@ def get_similar_words(root, word: str) -> list[str]:
                 cur_node = child        # move the pointer to matched child
                 break                   # continue to the next node
 
-        if char_not_found:      # begin adding all words with this prefix to the return array
-            return get_all_children(cur_node, prefix)
-                   # entire word matches
+        if char_not_found:      # stop at the first letter that doesn't match
+            break
 
-    return []
+    # Either a letter didn't match, or every letter matched but the word
+    # isn't marked as finished (e.g. "Nor" is the start of "Norway"). In
+    # both cases the candidates are the words below the node reached.
+    candidates = []
+    if cur_node.word_finished:      # the matched part is a word itself
+        candidates.append(prefix)
+    candidates.extend(get_all_children(cur_node, prefix))
+    return candidates
 
-# helper function to return all children of a node in a trie structure
+# helper function to return all the words below a node in a trie structure
+# (not counting the node's own word)
 def get_all_children(root, prefix: str) -> list[str]:
     ret_lst = []
-    if not root.children:   # If the root has no children, trie is empty so the prefix does not exist
-        return []
-    
     for child in root.children:
-        if child.word_finished:
-            ret_lst.append(prefix + child.char)
-        else:
-            new_prefix = prefix + child.char
-            new_children = get_all_children(child,new_prefix)
-            for new_child in new_children:
-                ret_lst.append(new_child)
+        new_prefix = prefix + child.char
+        if child.word_finished:         # this child ends a word...
+            ret_lst.append(new_prefix)
+        # ...and longer words can still continue below it ("will" ->
+        # "willing"), so always keep going down
+        ret_lst.extend(get_all_children(child, new_prefix))
 
     return ret_lst
 
 # takes a word and given a list of words return the closest words
+# Keeps the N_SUGGESTIONS candidates with the smallest edit distance to
+# source, closest first. A candidate replaces the last one kept only if it
+# is strictly closer, so among words the same distance away, the one that
+# came first (alphabetical order in the dictionary) is kept.
+N_SUGGESTIONS = 3
+
 def suggest(words: list[str], source: str) -> list[str]:
-    ret_lst = []
+    ret_lst = []    # (distance, word) pairs, closest first
     for word in words:
         dist = edit_dist(source, word)
-        if len(ret_lst) < 3:
-            ret_lst.append(word)
+        if len(ret_lst) < N_SUGGESTIONS:
+            ret_lst.append((dist, word))
+        elif dist < ret_lst[-1][0]:     # closer than the furthest one kept
+            ret_lst[-1] = (dist, word)
         else:
-            if dist > edit_dist(source, ret_lst[2]):        # dist is not a minumum distance
-                continue
-            elif dist >= edit_dist(source, ret_lst[2]):     # dist is a minimum distance
-                # add new distance in
-                ret_lst[2] = word
-                # sort ret_list based on edit distance
-                ret_lst.sort(key=lambda str: edit_dist(source,str))
+            continue
+        # sort by distance; sort() is stable, so ties keep their order
+        ret_lst.sort(key=lambda pair: pair[0])
 
-    return ret_lst
+    return [word for dist, word in ret_lst]
 
 # TOKENIZATION
 # param: fname, file name to be read
@@ -210,40 +223,119 @@ def edit_dist(s,t):
     return dist[row][col]
 
 # INTERFACE
-def interface():
-    # check for correct number of command line arguments
-    if len(sys.argv) != 2:
-        print("Incorrect number of arguments")
-        return
+# Folder this script is in, so the default dictionary is found no matter
+# which folder the script is run from
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DICT = os.path.join(SCRIPT_DIR, 'files', 'words')
+OUTPUT_PREFIX = 'corrected_'
+
+def default_output_name(input_fname):
+    # files/short1.txt -> files/corrected_short1.txt (saved next to the input)
+    folder, name = os.path.split(input_fname)
+    return os.path.join(folder, OUTPUT_PREFIX + name)
+
+def short_path(fname):
+    # Show a path relative to the current folder if it's inside it, and the
+    # full path otherwise
+    cwd = os.getcwd()
+    full = os.path.abspath(fname)
+    if os.path.commonpath([cwd, full]) == cwd:
+        return os.path.relpath(full)
+    return full
+
+def read_text_file(read, fname):
+    # Call read(fname), stopping with a clear message if the file isn't text
+    try:
+        return read(fname)
+    except UnicodeDecodeError:
+        sys.exit("Error: '%s' is not a UTF-8 text file" % fname)
+
+def run(input_fname, output_fname, dict_fname):
     # root of dictionary
-    root = trie_dict('/files/words')
+    root = read_text_file(trie_dict, dict_fname)
     # add punctuation to dictionary
     add_punction_to_trie(root)
 
-    fname = sys.argv[1]
-    new_fname = 'corrected_' + fname
-    tokens = tokenize(fname)
-    with open(new_fname, 'w') as f:
+    tokens = read_text_file(tokenize, input_fname)
+    replacing = os.path.exists(output_fname)
+    with open(output_fname, 'w') as f:
         for word in tokens:
             if word_exists(root, word):
                 f.write(word + ' ')
             else:
                 similar_words = get_similar_words(root, word)
-                suggestions = suggest(similar_words, word) 
+                suggestions = suggest(similar_words, word)
                 if len(suggestions) > 0: # if there is a spell correction:
                     print('Changing %s to %s'%(word,suggestions[0]))    # prints word and line
                     f.write(suggestions[0] + ' ')                             # write correct spelling
                 else:
                     print('No suggestions for: %s'%(word))              # print no correction found
                     f.write(word + ' ')                                       # write same word
+    print('Saved the corrected text to %s%s.'
+          % (output_fname, ' (replaced the old file)' if replacing else ''))
 
     # put the file back together using regex
 
     # load a file whose name is given as a command-line argument.
     # look for words that are incorrectly spelled. prints out the line that the word appeared in
     # save its corrected version to a new file with the prefix `corrected_`.
+
+def interface():
+    parser = argparse.ArgumentParser(
+        prog='spellchecker.py',
+        description='Find the misspelled words in a text file, replace each '
+                    'one with\nthe closest dictionary word, and save the '
+                    'corrected text to a new file.',
+        epilog='examples:\n'
+               '  python3 spellchecker.py files/short1.txt             '
+               '-> files/corrected_short1.txt\n'
+               '  python3 spellchecker.py files/short1.txt -o out.txt  '
+               '-> out.txt\n'
+               '  python3 spellchecker.py files/short1.txt -d mywords  '
+               'check against the words in mywords',
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('input', metavar='TEXTFILE',
+                        help='text file to check')
+    parser.add_argument('-o', '--output', metavar='OUTFILE',
+                        help='where to save the corrected text (default: '
+                             'the input file\'s name with %s in front, in '
+                             'the same folder as the input). An existing '
+                             'file is replaced.' % OUTPUT_PREFIX)
+    parser.add_argument('-d', '--dict', metavar='WORDLIST', dest='dict_fname',
+                        help='dictionary to check against, one word per line '
+                             '(default: files/words in this script\'s '
+                             'folder)')
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return
+    args = parser.parse_args()
+
+    input_fname = args.input
+    output_fname = args.output
+    if output_fname is None:
+        output_fname = default_output_name(input_fname)
+    dict_fname = args.dict_fname
+    if dict_fname is None:
+        dict_fname = short_path(DEFAULT_DICT)
+
+    # Check the files before doing any work, so mistakes fail fast
+    if not os.path.isfile(input_fname):
+        parser.error("input file '%s' not found" % input_fname)
+    if not os.path.isfile(dict_fname):
+        parser.error("dictionary '%s' not found" % dict_fname)
+    for other, what in [(input_fname, 'input'), (dict_fname, 'dictionary')]:
+        if os.path.abspath(output_fname) == os.path.abspath(other):
+            parser.error("output file '%s' is the same as the %s file"
+                         % (output_fname, what))
+    output_dir = os.path.dirname(output_fname)
+    if output_dir and not os.path.isdir(output_dir):
+        parser.error("folder '%s' for the output file does not exist"
+                     % output_dir)
+
+    run(input_fname, output_fname, dict_fname)
+
 def test_trie():
-    root = trie_dict('/files/words')
+    root = trie_dict(DEFAULT_DICT)
     print(len(root.children))
     print(str(word_exists(root, 'abondon')))
 
