@@ -26,6 +26,104 @@ The sample data is four authors, with excerpts from several of their books
                 Ghost and other stories, The Portrait of Mr. W. H.
   tolstoy.txt   Leo Tolstoy: War and Peace, Anna Karenina
 
+Setup
+-----
+Follow the setup in the top-level README.md (install requirements.txt).
+The scripts only need nltk and its 'punkt' / 'punkt_tab' tokenizer data.
+If the tokenizer data is missing, they download it (to ~/nltk_data)
+on the first run. If a download fails, they stop and say which package
+failed; on macOS that usually means the certificate step in the top-level
+README was skipped.
+
+How to run
+----------
+  Usage:
+
+      python3 bigram_classifier.py <authorlist>                  (accuracy)
+      python3 bigram_classifier.py <authorlist> -test <textfile> (guess authors)
+      python3 bigram_classifier.py --help                        (help)
+
+  ngram_classifier.py takes the same arguments plus --ngram N, the n-gram
+  order from 1 to 5 (default 2). It can go anywhere on the command line:
+
+      python3 ngram_classifier.py <authorlist> --ngram 3
+      python3 ngram_classifier.py <authorlist> -test <textfile> --ngram 3
+
+  Everything below applies to both scripts. The expected output is for
+  bigrams; see "n-gram models" for the other orders.
+
+  -test can also be written --test, and can go before or after the author
+  list. Running with no arguments prints the help. If an argument is
+  missing or a file can't be found, the script says what's wrong and shows
+  the usage.
+
+  The author list has one author text file per line. File names in it are
+  relative to the author list's own folder, so the script works from any
+  directory, e.g. from the top of the repo:
+
+      python3 Author_Language_Model/bigram_classifier.py Author_Language_Model/authorlist1
+
+  Each author is named after their file without the extension
+  (austen.txt -> austen). The list needs at least two authors.
+
+  Default mode: split each author's text, train on one part and measure
+  accuracy on the rest:
+
+      python3 bigram_classifier.py authorlist1
+
+  Each author's text is split into sentences. Every 10th sentence
+  (TEST_EVERY) is held out for testing and the model is trained on the
+  other 90%. The split is done in memory; no files are written. Each test
+  sentence is classified, and it prints how many of each author's test
+  sentences were guessed correctly.
+
+  Expected output:
+
+      austen   484/576 correct
+      dickens   556/694 correct
+      wilde   494/677 correct
+      tolstoy   900/1064 correct
+
+  That's 80.8% overall. Guessing at random would give 25%.
+
+  -test mode: train on the full author files and classify every sentence
+  of another file:
+
+      python3 bigram_classifier.py authorlist1 -test test.txt
+
+  Output is one line per sentence: its number, the author whose model
+  scored best, and the start of the sentence.
+
+  test.txt has one passage per author. Each passage was taken out of its
+  author file, so none of it is in the training data:
+
+      Sentences  1-7   Austen, Emma
+      Sentences  8-13  Dickens, David Copperfield
+      Sentences 14-26  Wilde, The Picture of Dorian Gray
+      Sentences 27-33  Tolstoy, Anna Karenina
+
+  Expected output (abridged):
+
+      Sentence 1:   austen    "There is one thing, Emma, which a man can alwa...
+      Sentence 2:   austen    It is Frank Churchill's duty to pay this attent...
+      ...
+      Sentence 7:   tolstoy   '-If he would say so to her at once, in the ton...
+      Sentence 8:   dickens   I thought it affecting to see such a sturdy fel...
+      ...
+      Sentence 22:  dickens   Yes.
+      ...
+      Sentence 33:  tolstoy   For the first time in his life he knew the bitt...
+
+  26 of the 33 sentences are right: Austen 6/7, Dickens 3/6, Wilde 11/13
+  and Tolstoy 6/7. The misses include a one-word sentence ("Yes."), a
+  fragment where sent_tokenize split a sentence at a quote (sentence 7),
+  and half of the Dickens passage, whose short first-person sentences ("I
+  was affected by the story altogether.") could belong to anyone.
+
+  To try your own text, put it in a file (it can be hard-wrapped;
+  separate paragraphs with blank lines) and pass that instead of
+  test.txt.
+
 How it works
 ------------
 1. Sentences (read_sentences)
@@ -147,105 +245,6 @@ Files in this folder
   test_bigram_classifier.py, test_ngram_classifier.py
                          unit and end-to-end tests (see "Running the tests")
   test.py                scratch file for trying things out (not used)
-
-Setup
------
-Follow the setup in the top-level README.md (install requirements.txt).
-The scripts only need nltk and its 'punkt' / 'punkt_tab' tokenizer data.
-If the tokenizer data is missing, they download it (to ~/nltk_data)
-on the first run. If a download fails, they stop and say which package
-failed; on macOS that usually means the certificate step in the top-level
-README was skipped.
-
-How to run
-----------
-  Usage:
-
-      python3 bigram_classifier.py <authorlist>                  (accuracy)
-      python3 bigram_classifier.py <authorlist> -test <textfile> (guess authors)
-      python3 bigram_classifier.py --help                        (help)
-
-  ngram_classifier.py takes the same arguments plus --ngram N, the n-gram
-  order from 1 to 5 (default 2). It can go anywhere on the command line:
-
-      python3 ngram_classifier.py <authorlist> --ngram 3
-      python3 ngram_classifier.py <authorlist> -test <textfile> --ngram 3
-
-  Everything below applies to both scripts. The expected output is for
-  bigrams; see "n-gram models" for the other orders.
-
-  -test can also be written --test, and can go before or after the author
-  list. Running with no arguments prints the help. If an argument is
-  missing or a file can't be found, the script says what's wrong and shows
-  the usage.
-
-  The author list has one author text file per line. File names in it are
-  relative to the author list's own folder, so the script works from any
-  directory, e.g. from the top of the repo:
-
-      python3 Author_Language_Model/bigram_classifier.py Author_Language_Model/authorlist1
-
-  Each author is named after their file without the extension
-  (austen.txt -> austen). The list needs at least two authors.
-
-  Default mode: split each author's text, train on one part and measure
-  accuracy on the rest:
-
-      python3 bigram_classifier.py authorlist1
-
-  Each author's text is split into sentences. Every 10th sentence
-  (TEST_EVERY) is held out for testing and the model is trained on the
-  other 90%. The split is done in memory; no files are written. Each test
-  sentence is classified, and it prints how many of each author's test
-  sentences were guessed correctly.
-
-  Expected output:
-
-      austen   484/576 correct
-      dickens   556/694 correct
-      wilde   494/677 correct
-      tolstoy   900/1064 correct
-
-  That's 80.8% overall. Guessing at random would give 25%.
-
-  -test mode: train on the full author files and classify every sentence
-  of another file:
-
-      python3 bigram_classifier.py authorlist1 -test test.txt
-
-  Output is one line per sentence: its number, the author whose model
-  scored best, and the start of the sentence.
-
-  test.txt has one passage per author. Each passage was taken out of its
-  author file, so none of it is in the training data:
-
-      Sentences  1-7   Austen, Emma
-      Sentences  8-13  Dickens, David Copperfield
-      Sentences 14-26  Wilde, The Picture of Dorian Gray
-      Sentences 27-33  Tolstoy, Anna Karenina
-
-  Expected output (abridged):
-
-      Sentence 1:   austen    "There is one thing, Emma, which a man can alwa...
-      Sentence 2:   austen    It is Frank Churchill's duty to pay this attent...
-      ...
-      Sentence 7:   tolstoy   '-If he would say so to her at once, in the ton...
-      Sentence 8:   dickens   I thought it affecting to see such a sturdy fel...
-      ...
-      Sentence 22:  dickens   Yes.
-      ...
-      Sentence 33:  tolstoy   For the first time in his life he knew the bitt...
-
-  26 of the 33 sentences are right: Austen 6/7, Dickens 3/6, Wilde 11/13
-  and Tolstoy 6/7. The misses include a one-word sentence ("Yes."), a
-  fragment where sent_tokenize split a sentence at a quote (sentence 7),
-  and half of the Dickens passage, whose short first-person sentences ("I
-  was affected by the story altogether.") could belong to anyone.
-
-  To try your own text, put it in a file (it can be hard-wrapped;
-  separate paragraphs with blank lines) and pass that instead of
-  test.txt.
-
 
 Running the tests
 -----------------

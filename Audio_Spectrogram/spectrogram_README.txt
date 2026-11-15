@@ -16,6 +16,86 @@ cells for sa1.wav. It can also
 print the raw samples between two times, or plot the waveform, to check
 the audio against a program like Audacity.
 
+Setup
+-----
+Follow the setup in the top-level README.md (install requirements.txt).
+The script needs numpy and matplotlib (which installs Pillow, used by the
+tests to read the saved images).
+
+How to run
+----------
+      python3 spectrogram.py [WAVFILE] [-o IMAGEFILE] [--print START END]
+                             [--plot]
+
+  WAVFILE            the .wav file to read. If left out, dr1/sa1.wav in
+                     the script's folder is used, so the script can be run
+                     from any folder.
+  -o IMAGEFILE       where to save the image. If left out, it's the input
+                     file's name with _spectrogram.png on the end, in the
+                     same folder as the input. The extension picks the
+                     format: .png, .jpg, .pdf, .svg, ...
+  --print START END  also print every sample from START to END seconds,
+                     to check against Audacity.
+  --plot             also show the waveform (amplitude against time in
+                     seconds) in a window. Close the window to finish.
+  -h                 show the help message.
+
+Examples:
+
+      python3 spectrogram.py                      dr1/sa1.wav
+                                                  -> dr1/sa1_spectrogram.png
+      python3 spectrogram.py dr1/si836.wav        dr1/si836.wav
+                                                  -> dr1/si836_spectrogram.png
+      python3 spectrogram.py dr1/si836.wav -o a.png
+                                                  dr1/si836.wav -> a.png
+
+It takes well under a second for sa1.wav:
+
+      $ python3 spectrogram.py
+      Read 54682 samples (3.42 s at 16000 Hz) from dr1/sa1.wav.
+      Saved a spectrogram (340 windows x 201 bins) to dr1/sa1_spectrogram.png.
+
+The other two recordings have 419 (si1466.wav) and 428 (si836.wav)
+windows; their images are the same 1500 x 675 pixels, with the time axis
+running to 4.2 and 4.3 s.
+
+With --print, the samples are listed after the image is saved, by sample
+number, time, raw value and scaled value:
+
+      $ python3 spectrogram.py --print 0.75 0.7505
+      Read 54682 samples (3.42 s at 16000 Hz) from dr1/sa1.wav.
+      Saved a spectrogram (340 windows x 201 bins) to dr1/sa1_spectrogram.png.
+
+      Samples 12000 to 12007 (0.7500 s to 0.7505 s):
+        sample   time (s)     raw    scaled
+         12000    0.75000    4246   0.12958
+         12001    0.75006    2425   0.07401
+         12002    0.75013     470   0.01434
+         12003    0.75019   -1971  -0.06015
+         12004    0.75025   -3850  -0.11749
+         12005    0.75031   -5150  -0.15717
+         12006    0.75038   -5535  -0.16891
+         12007    0.75044   -5102  -0.15570
+
+A missing input file, an output folder that doesn't exist, an output
+file without an image extension, an output file that is the same as the
+input, or a --print range with END before START stops the script with a
+short error before any work is done:
+
+      $ python3 spectrogram.py nope.wav
+      usage: spectrogram.py [-h] [-o IMAGEFILE] [--print START END] [--plot]
+                            [WAVFILE]
+      spectrogram.py: error: input file 'nope.wav' not found
+
+A file that isn't a .wav file gives:
+
+      $ python3 spectrogram.py dr1/sa1.txt
+      Error: 'dr1/sa1.txt' is not a .wav file (file does not start with RIFF id)
+
+an 8-bit .wav file gives "can't read ... (8-bit samples; only 16-bit is
+supported)", and a file shorter than one 25 ms window stops with "is too
+short to draw".
+
 How it works
 ------------
 1. Read the audio (get_wave_data)
@@ -117,86 +197,6 @@ Files in this folder
                                                out the cost involved."
                          Each .txt holds the first and last sample number
                          and the sentence. The script doesn't use them.
-
-Setup
------
-Follow the setup in the top-level README.md (install requirements.txt).
-The script needs numpy and matplotlib (which installs Pillow, used by the
-tests to read the saved images).
-
-How to run
-----------
-      python3 spectrogram.py [WAVFILE] [-o IMAGEFILE] [--print START END]
-                             [--plot]
-
-  WAVFILE            the .wav file to read. If left out, dr1/sa1.wav in
-                     the script's folder is used, so the script can be run
-                     from any folder.
-  -o IMAGEFILE       where to save the image. If left out, it's the input
-                     file's name with _spectrogram.png on the end, in the
-                     same folder as the input. The extension picks the
-                     format: .png, .jpg, .pdf, .svg, ...
-  --print START END  also print every sample from START to END seconds,
-                     to check against Audacity.
-  --plot             also show the waveform (amplitude against time in
-                     seconds) in a window. Close the window to finish.
-  -h                 show the help message.
-
-Examples:
-
-      python3 spectrogram.py                      dr1/sa1.wav
-                                                  -> dr1/sa1_spectrogram.png
-      python3 spectrogram.py dr1/si836.wav        dr1/si836.wav
-                                                  -> dr1/si836_spectrogram.png
-      python3 spectrogram.py dr1/si836.wav -o a.png
-                                                  dr1/si836.wav -> a.png
-
-It takes well under a second for sa1.wav:
-
-      $ python3 spectrogram.py
-      Read 54682 samples (3.42 s at 16000 Hz) from dr1/sa1.wav.
-      Saved a spectrogram (340 windows x 201 bins) to dr1/sa1_spectrogram.png.
-
-The other two recordings have 419 (si1466.wav) and 428 (si836.wav)
-windows; their images are the same 1500 x 675 pixels, with the time axis
-running to 4.2 and 4.3 s.
-
-With --print, the samples are listed after the image is saved, by sample
-number, time, raw value and scaled value:
-
-      $ python3 spectrogram.py --print 0.75 0.7505
-      Read 54682 samples (3.42 s at 16000 Hz) from dr1/sa1.wav.
-      Saved a spectrogram (340 windows x 201 bins) to dr1/sa1_spectrogram.png.
-
-      Samples 12000 to 12007 (0.7500 s to 0.7505 s):
-        sample   time (s)     raw    scaled
-         12000    0.75000    4246   0.12958
-         12001    0.75006    2425   0.07401
-         12002    0.75013     470   0.01434
-         12003    0.75019   -1971  -0.06015
-         12004    0.75025   -3850  -0.11749
-         12005    0.75031   -5150  -0.15717
-         12006    0.75038   -5535  -0.16891
-         12007    0.75044   -5102  -0.15570
-
-A missing input file, an output folder that doesn't exist, an output
-file without an image extension, an output file that is the same as the
-input, or a --print range with END before START stops the script with a
-short error before any work is done:
-
-      $ python3 spectrogram.py nope.wav
-      usage: spectrogram.py [-h] [-o IMAGEFILE] [--print START END] [--plot]
-                            [WAVFILE]
-      spectrogram.py: error: input file 'nope.wav' not found
-
-A file that isn't a .wav file gives:
-
-      $ python3 spectrogram.py dr1/sa1.txt
-      Error: 'dr1/sa1.txt' is not a .wav file (file does not start with RIFF id)
-
-an 8-bit .wav file gives "can't read ... (8-bit samples; only 16-bit is
-supported)", and a file shorter than one 25 ms window stops with "is too
-short to draw".
 
 Running the tests
 -----------------

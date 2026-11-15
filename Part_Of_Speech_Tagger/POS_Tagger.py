@@ -259,7 +259,8 @@ def download_nltk_data():
             if not nltk.download(package):
                 sys.exit(f"Error: could not download NLTK package '{package}'. "
                          "Check your internet connection (on macOS, see the "
-                         "certificate step in the README) and try again.")
+                         "certificate step in the top-level README) and "
+                         "try again.")
 
 def usage_error(message: str):
     print(f"Error: {message}\n", file=sys.stderr)

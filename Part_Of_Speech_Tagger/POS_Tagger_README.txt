@@ -31,31 +31,14 @@ trained on the Brown corpus (via NLTK). It has three parts:
                           tag for each word. It also reports the probability
                           of that best tagging. Run it with --tag.
 
-Files in this folder
---------------------
-  POS_Tagger.py             the script
-  model_dat.json            a pre-built model (output of --build)
-  test_tagged_sentence.txt  sample input for --prob (word/TAG format)
-  test_untagged.txt         sample input for --tag
-  test_untagged_2.txt       another sample input for --tag
-
 Setup
 -----
-1. Install NLTK:
-
-       pip3 install nltk
-
-2. macOS only (python.org installer): Python can't verify SSL certificates
-   until you run the bundled certificate installer, so NLTK's downloads fail
-   with "CERTIFICATE_VERIFY_FAILED". Run this once (change the version to
-   match yours):
-
-       open "/Applications/Python 3.14/Install Certificates.command"
-
-3. NLTK data: nothing to do. On its first run the script downloads anything
-   that's missing (brown, words, punkt, punkt_tab) to ~/nltk_data. If a
-   download fails, it stops and says which package failed. On macOS that
-   usually means step 2 was skipped.
+Follow the setup in the top-level README.md (install requirements.txt).
+The script only needs nltk and its 'brown', 'words' and 'punkt' /
+'punkt_tab' data. If any of that data is missing, it downloads it (to
+~/nltk_data) on the first run. If a download fails, it stops and says
+which package failed; on macOS that usually means the certificate step in
+the top-level README was skipped.
 
 How to run
 ----------
@@ -115,6 +98,14 @@ Run from inside this folder.
   Each word is printed as word/TAG; see "Tag reference" below for what the
   tags mean. The probability is P(words, tags) for the best tagging only,
   not P(words) summed over all taggings.
+
+Files in this folder
+--------------------
+  POS_Tagger.py             the script
+  model_dat.json            a pre-built model (output of --build)
+  test_tagged_sentence.txt  sample input for --prob (word/TAG format)
+  test_untagged.txt         sample input for --tag
+  test_untagged_2.txt       another sample input for --tag
 
 Tag reference (Brown tagset)
 ----------------------------

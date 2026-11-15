@@ -20,6 +20,68 @@ all 3 misspellings in samples/short1.txt. samples/text_1.txt has no
 misspellings, and 1 of its 2,080 words is still changed, because neither
 list has it (see "Limitations").
 
+Setup
+-----
+Nothing to install: the script only uses the Python standard library
+(Python 3.9 or newer, for the list[str] type hints). NLTK is only needed
+to remake dictionary/brown_words with make_brown_words.py (see the top-level
+README.md for installing NLTK and its 'brown' data):
+
+      python3 make_brown_words.py
+      Saved 2645 words to dictionary/brown_words.
+
+How to run
+----------
+      python3 spellchecker.py TEXTFILE [-o OUTFILE] [-d WORDLIST]
+
+  TEXTFILE       the text file to check.
+  -o OUTFILE     where to save the corrected text. If left out, it's the
+                 input file's name with corrected_ in front, in the
+                 corrected/ folder next to the script, wherever the input
+                 is (samples/short1.txt -> corrected/corrected_short1.txt).
+                 An existing file is replaced, and the script says so.
+  -d WORDLIST    a word list to check against, one word per line. Give
+                 -d more than once to use several lists. If left out,
+                 dictionary/words and dictionary/brown_words next to the
+                 script are used, so the script can be run from any
+                 folder.
+  -h             show the help message (also shown when the script is
+                 run with no arguments).
+
+For short1.txt it takes about half a second:
+
+      $ python3 spellchecker.py samples/short1.txt
+      Line 1: changing wioll to will
+          you wioll rejoice to hear that no...
+      Line 3: changing yesterdy to yesterday
+          ...oreboding. I arrive here yesterdy, and my first task is to...
+      Line 4: changing welfure to welfare
+          my dear sister of my welfure and increasing confidenc...
+      Changed 3 words.
+      Replaced corrected/corrected_short1.txt with the corrected text.
+
+(the last line says "Saved the corrected text to ..." when the output
+file doesn't exist yet). corrected/corrected_short1.txt then has the same
+lines as short1.txt with the three words fixed:
+
+      you will rejoice to hear that no disaster have accompany the
+      commencement of an enterprise which you have regard with such evil
+      foreboding. I arrive here yesterday, and my first task is to assure
+      my dear sister of my welfare and increasing confidence in the success
+      of my undertaking.
+
+("have accompany" and "regard" are grammar mistakes in the sample, not
+spelling mistakes, so a spell checker shouldn't change them.)
+
+text_1.txt has no misspellings. 1 of its 2,080 words is changed,
+because neither word list has it (see "Limitations"):
+
+      $ python3 spellchecker.py samples/text_1.txt
+      Line 3: changing preeminently to preen
+          ...r people impels. This is preeminently the time to speak the tr...
+      Changed 1 word.
+      Replaced corrected/corrected_text_1.txt with the corrected text.
+
 How it works
 ------------
 The steps below describe what the code does; "Limitations" covers what
@@ -197,68 +259,6 @@ Files in this folder
     corrected_short1.txt
     corrected_text_1.txt
     corrected_apostrophe_test.txt
-
-Setup
------
-Nothing to install: the script only uses the Python standard library
-(Python 3.9 or newer, for the list[str] type hints). NLTK is only needed
-to remake dictionary/brown_words with make_brown_words.py (see the top-level
-README.md for installing NLTK and its 'brown' data):
-
-      python3 make_brown_words.py
-      Saved 2645 words to dictionary/brown_words.
-
-How to run
-----------
-      python3 spellchecker.py TEXTFILE [-o OUTFILE] [-d WORDLIST]
-
-  TEXTFILE       the text file to check.
-  -o OUTFILE     where to save the corrected text. If left out, it's the
-                 input file's name with corrected_ in front, in the
-                 corrected/ folder next to the script, wherever the input
-                 is (samples/short1.txt -> corrected/corrected_short1.txt).
-                 An existing file is replaced, and the script says so.
-  -d WORDLIST    a word list to check against, one word per line. Give
-                 -d more than once to use several lists. If left out,
-                 dictionary/words and dictionary/brown_words next to the
-                 script are used, so the script can be run from any
-                 folder.
-  -h             show the help message (also shown when the script is
-                 run with no arguments).
-
-For short1.txt it takes about half a second:
-
-      $ python3 spellchecker.py samples/short1.txt
-      Line 1: changing wioll to will
-          you wioll rejoice to hear that no...
-      Line 3: changing yesterdy to yesterday
-          ...oreboding. I arrive here yesterdy, and my first task is to...
-      Line 4: changing welfure to welfare
-          my dear sister of my welfure and increasing confidenc...
-      Changed 3 words.
-      Replaced corrected/corrected_short1.txt with the corrected text.
-
-(the last line says "Saved the corrected text to ..." when the output
-file doesn't exist yet). corrected/corrected_short1.txt then has the same
-lines as short1.txt with the three words fixed:
-
-      you will rejoice to hear that no disaster have accompany the
-      commencement of an enterprise which you have regard with such evil
-      foreboding. I arrive here yesterday, and my first task is to assure
-      my dear sister of my welfare and increasing confidence in the success
-      of my undertaking.
-
-("have accompany" and "regard" are grammar mistakes in the sample, not
-spelling mistakes, so a spell checker shouldn't change them.)
-
-text_1.txt has no misspellings. 1 of its 2,080 words is changed,
-because neither word list has it (see "Limitations"):
-
-      $ python3 spellchecker.py samples/text_1.txt
-      Line 3: changing preeminently to preen
-          ...r people impels. This is preeminently the time to speak the tr...
-      Changed 1 word.
-      Replaced corrected/corrected_text_1.txt with the corrected text.
 
 Running the tests
 -----------------
