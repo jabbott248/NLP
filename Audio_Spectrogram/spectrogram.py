@@ -1,7 +1,7 @@
 
 ### Spectrogram: Take a .wav file and print out a spectrogram image of the file
 
-from cmath import cos, log10
+from cmath import cos
 import argparse
 import cmath
 import math
@@ -75,25 +75,22 @@ def plot_wave_data(data):
 
 
 
-## Create windows, (list of lists of samples)
-# use a rectangular window with size s = 25 ms, creating a new data window each 10 ms
-# Generate a window x[n], ..., x[n+s] based on this window size by taking a slice of the array of samples.
-def create_windows(samples):
-    sample_rate = 16000
-    # 16,000 samples per second, 1 second per 1,000 milliseconds, 25 ms per window
-    sample_size = sample_rate/1000*25           #400
-    step_back_size = int(sample_rate/1000*10)   #160
+## Create windows (list of lists of samples)
+# Cut the samples into overlapping windows of WINDOW_MS (25 ms), starting a
+# new window every STEP_MS (10 ms). Window n is the slice
+# samples[n*step : n*step + size], so windows start at samples
+# 0, 160, 320, ... and each holds 400 samples. A last piece shorter than a
+# full window is dropped.
+WINDOW_MS = 25
+STEP_MS = 10
+
+def create_windows(samples, sample_rate=16000):
+    # 16,000 samples per second, 1 second per 1,000 milliseconds
+    size = int(sample_rate / 1000 * WINDOW_MS)   # 400 samples
+    step = int(sample_rate / 1000 * STEP_MS)     # 160 samples
     windows = []
-    window = []
-    i = 0
-    while(i < len(samples)):
-        window.append(samples[i])
-        i+=1
-        if (i%sample_size == 0):
-            windows.append(window)
-            window = []
-            i = i-step_back_size
-            sample_size = i+400
+    for start in range(0, len(samples) - size + 1, step):
+        windows.append(list(samples[start:start + size]))
     return windows
 
 def hamm_windows(windows):
@@ -107,22 +104,31 @@ def hamm_windows(windows):
     #return windows
 
 ## Fourier transformation
-# Input: for each 10 ms time step, you will have a window x[n], ..., x[n+s]
-# Output: an array of complex numbers
+# Input: a list of windows x[n], ..., x[n+s], one for each 10 ms time step
+# Output: a 2-D numpy array, one row per window and one column per
+# frequency bin, holding the loudness of that bin in decibels.
+#
+# For a window of N samples, bin k is the frequency k * sample_rate / N
+# (40 * k Hz for 400 samples at 16,000 Hz). Only bins 0 to N/2 are kept
+# (0-200, so 0 to 8,000 Hz): for real audio the bins above N/2 are a mirror
+# image of the ones below.
+#
+# Adding a tiny number before the log keeps a window of complete silence
+# (magnitude 0) from crashing it, since log10(0) is undefined.
+SILENCE_FLOOR = 1e-10
+
 def transform(windows):
     output = []
     for window in windows:
         transformed_data = np.fft.fft(window)
-        for data in transformed_data:
-            # Convert complex numbers to magnitudes
-            real = abs(data.real)
-            imag = abs(data.imag)
-            magnitude = math.sqrt(real) + math.sqrt(imag)
-            # Convert from that to log scale with the formula 10 * log10
-            log_scale = 10 * log10(magnitude)
-            log_scale = log_scale.real
-            output.append(log_scale)
-    return output
+        n_bins = len(window) // 2 + 1                    # 201 for 400
+        # Magnitude of each complex number: sqrt(re^2 + im^2)
+        magnitudes = np.abs(transformed_data[:n_bins])
+        # Decibels of a magnitude are 20 * log10(|X|)
+        # (the same as 10 * log10 of the power |X|^2)
+        log_scale = 20 * np.log10(magnitudes + SILENCE_FLOOR)
+        output.append(log_scale)
+    return np.array(output)
 
 
 ## Draw the spectrogram image
@@ -130,12 +136,10 @@ def transform(windows):
 # of height. Frequency runs up the y-axis and intensity is shown by the
 # darkness of the pixel: white means the lowest value and black the highest.
 #
-# data is the flat list from transform(), n_windows values at a time, so it
-# is cut back into one row per window first.
-def create_spectrogram(data, n_windows, output_fname):
-    values = np.array(data, dtype=float).reshape(n_windows, -1)
-    # rows = frequency bins, columns = windows (time)
-    values = values.T
+# data comes from transform(): one row per window, one column per bin.
+def create_spectrogram(data, output_fname):
+    # Turn it on its side: rows = frequency bins, columns = windows (time)
+    values = np.array(data, dtype=float).T
     # Image row 0 is the top of the picture, but low frequencies belong at
     # the bottom, so flip it: bin k goes to row (height - 1 - k)
     values = np.flipud(values)
@@ -178,7 +182,7 @@ def run(input_fname, output_fname):
         sys.exit("Error: '%s' is too short to draw (%i samples; one window "
                  "needs 400)" % (input_fname, len(data)))
     ft_windows = transform(windows)
-    img = create_spectrogram(ft_windows, len(windows), output_fname)
+    img = create_spectrogram(ft_windows, output_fname)
     print('Read %i samples from %s.' % (len(data), input_fname))
     print('Saved a %i x %i pixel spectrogram to %s.'
           % (img.width, img.height, output_fname))
