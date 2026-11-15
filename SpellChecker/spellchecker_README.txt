@@ -3,18 +3,18 @@ Spell Checker
 
 What it does
 ------------
-spellchecker.py is meant to read a text file, find the words that aren't
-in its dictionary, replace each one with the closest dictionary word, and
+spellchecker.py reads a text file, finds the words that aren't in its
+dictionary, replaces each one with the closest dictionary word, and
 save the corrected text to a new file whose name starts with
 "corrected_". It prints each change it makes ("Changing wioll to
 will").
 
-It fixes all 3 misspellings in files/short1.txt. But it still flags far
-too many correct words: files/text_1.txt has no misspellings, yet 252 of
-its 2,080 words are flagged and changed, every one for the worse:
-"President" becomes "Presley", "has" becomes "hash" and "efforts"
-becomes "effort". Almost all of these are capitalised words and word
-endings the dictionary doesn't have (Known issues 6 and 7).
+Words with capital letters and common endings ("This", "helped",
+"cities", "people's") are recognised, even though the dictionary only
+lists base forms. It fixes all 3 misspellings in files/short1.txt.
+files/text_1.txt has no misspellings, and 8 of its 2,080 words are
+still flagged: mostly words joined by a dash or colon that the tokenizer
+doesn't split, and a number (Known issue 8).
 
 How it works
 ------------
@@ -38,11 +38,48 @@ does something different (see "Known issues" for details).
    Mr . Chief Justice , my friends ,
    Commas inside numbers ("1,000") are kept. Apostrophes are left alone.
 
-3. Check each token (word_exists, find_prefix)
-   A token is spelled correctly if following its letters from the root
-   ends on a node marked word_finished. The check is case-sensitive.
+3. Check each token (is_spelled_correctly, word_exists, base_forms)
+   word_exists() checks whether a word is in the trie exactly as spelled:
+   following its letters from the root must end on a node marked
+   word_finished. is_spelled_correctly() accepts a token if word_exists()
+   is true for:
+     - the token itself, or its lower-case form if it has capitals, so
+       "This" at the start of a sentence and "THIS" in a heading are
+       fine. A lower-case token isn't accepted because of a capitalised
+       entry: "america" is flagged even though "America" is a word.
+     - or any of its base forms (base_forms()): what the word would be
+       with one common ending taken off. files/words lists only the base
+       form of most words ("help", not "helps", "helped", "helping"),
+       so the endings are handled by rules:
+           's, '        possessives       people's, citizens'
+           -s, -es      plurals, verbs    friends, taxes, goes
+           -ies, -ied   y -> i            cities, multiplied
+           -ves         f, fe -> v        selves, knives
+           -men         man -> men        women, salesmen
+           -ed, -ing    verbs             helped, believed, planned,
+                                          making, putting
+           -er, -est    comparatives      larger, greatest, bigger
+           -ier, -iest  y -> i            happier, happiest
+           -ly, -ily    adverbs           finally, simply, primarily
+       A few spelling checks stop some rules from accepting misspellings:
+       -es only follows s, x, z, ch, sh or o ("taxs" and "wishs" are
+       rejected); an e is dropped before -ing, -ed, -er and -est
+       ("hopeing" is rejected, but "seeing" and "dyeing" are fine);
+       3-letter words like run, sit and big must double their last letter
+       ("biger" is rejected); and -ier and -iest need at least 3 letters
+       in front ("thier" isn't "thy" + -ier).
+       27 common irregular forms the dictionary doesn't have are listed in
+       IRREGULAR_FORMS: has, began, held, heard, paid, children, feet, ...
+       (most irregular forms, like "went", "said" and "men", are in
+       files/words already).
 
-4. Find candidate replacements (get_similar_words, get_all_children)
+   On the Brown corpus (about a million words of 1960s American English,
+   from NLTK), 0.39% of the lower-case words are flagged. Most of those
+   are words missing from files/words, such as near, box, kid and proud
+   (Known issue 18).
+
+4. Find candidate replacements (correct, get_similar_words,
+   get_all_children)
    For a misspelled token, the trie is followed for as long as its
    letters match. The candidates are all the dictionary words that start
    with the part that matched, including that part itself if it is a
@@ -61,6 +98,12 @@ does something different (see "Known issues" for details).
    (Known issue 16). A token whose first character isn't in the trie at
    all, like "48", gets the whole dictionary as candidates, which takes
    about half a second.
+
+   correct() handles capitals: a token with capitals gets the candidates
+   for its lower-case form too, and each lower-case candidate is given
+   the token's capitals (match_case()), so "Wioll" gets "Will" and
+   "WIOLL" gets "WILL". Candidates that already have capitals, like
+   names, are left as they are: "Amercia" gets "America".
 
 5. Pick the closest candidate (suggest, edit_dist)
    Each candidate is compared with the token by minimum edit distance
@@ -91,12 +134,11 @@ Files in this folder
                     issue 13).
   files/            the dictionary and sample texts:
     words                    the dictionary, 235,886 words, one per
-                             line. It looks like a copy of the Unix
-                             word list /usr/share/dict/words (from
-                             Webster's Second International
-                             Dictionary, 1934), with 3 entries spelled
-                             differently and 93 words missing compared
-                             with the copy on macOS (Known issue 7).
+                             line, base forms only. It is the same
+                             list as NLTK's "words" corpus: the Unix
+                             word list from Webster's Second
+                             International Dictionary (1934). See
+                             Known issue 18.
     short_words              the first 100 words of words, for quick
                              tests
     short1.txt               5 lines from Frankenstein with 3
@@ -153,20 +195,23 @@ and files/corrected_short1.txt holds the whole text on one line:
 the sample, not spelling mistakes, so a spell checker shouldn't change
 them).
 
-text_1.txt takes about a second. It flags 252 of its 2,080 tokens and
-changes all of them, all wrongly. The most common changes:
+text_1.txt has no misspellings and takes about a second. 8 of its 2,080
+tokens are still flagged and changed, all wrongly:
 
-      Changing It to Ita                   (11 times)
-      Changing helped to helper            (7 times)
-      Changing has to hash                 (7 times)
-      Changing We to Wea                   (7 times)
-      Changing This to Think               (6 times)
-      Changing In to Ind                   (6 times)
-      Changing They to The                 (5 times)
-      Changing Nation to Natica            (5 times)
+      $ python3 spellchecker.py files/text_1.txt
+      Changing preeminently to preen
+      Changing itself—nameless to itself
+      Changing self-seekers to self
+      Changing falsity to falsify
+      Changing order: to order
+      Changing credits: to credit
+      Changing 48 to A
+      Changing crisis—broad to crisis
+      Saved the corrected text to files/corrected_text_1.txt.
 
-97 of the 252 are changed to a shorter form of themselves, such as
-efforts -> effort and years -> year.
+Five are tokenizer problems (dashes, colons and the number; Known issue
+8), and "preeminently", "self-seekers" and "falsity" aren't in
+files/words (Known issue 18).
 
 A missing input file or dictionary, an output folder that doesn't
 exist, or an output file that is the same as the input or the
@@ -230,24 +275,26 @@ files/.
     is how this way of finding candidates works rather than a bug in the
     code, so it is now issue 16.
 
- 6. The check is case-sensitive, and the dictionary has most words only
-    in lower case, so any word at the start of a sentence is flagged:
-    "This", "It", "We", "In". That is 88 of the 252 tokens flagged in
-    text_1.txt. The replacement is then found among words starting with
-    the capital letter, which are mostly names or rare words: It -> Ita,
-    This -> Think, United -> Unitarian, President -> Presley.
+ 6. [FIXED] The check was case-sensitive, and the dictionary has most
+    words only in lower case, so any word at the start of a sentence was
+    flagged: "This", "It", "We", "In", 88 of the 252 tokens flagged in
+    text_1.txt. The replacement was then found among words starting with
+    the capital letter, mostly names: This -> Thiospira, It -> Ita.
+    A token with capitals is now also checked in lower case, and its
+    candidates include the lower-case ones, given the token's capitals
+    (see "How it works", steps 3 and 4): "Wioll" -> "Will".
 
- 7. The dictionary has no inflected forms: no plurals, -ed, -ing or -s
-    verb forms. "has", "friends", "helped", "needed" and "years" aren't
-    in it. About 150 of the 252 tokens flagged in text_1.txt are
-    inflections of dictionary words, and they get "corrected" to the
-    closest word with the same start: efforts -> effort, helped ->
-    helper, has -> hash, friends -> friendship. The dictionary also
-    lacks most names (Hoover -> Hooverism, Congress -> Congresso).
-    Compared with macOS's /usr/share/dict/words, files/words is missing
-    93 words (e.g. acknowledgment, administered) and has 3 misspelled
-    entries (administerd, stucturelessness, transvaal), so "administerd"
-    is accepted as correct.
+ 7. [FIXED] The dictionary has no inflected forms: no plurals, -ed, -ing
+    or -s verb forms. "has", "friends", "helped", "needed" and "years"
+    aren't in it, and about 150 of the 252 tokens flagged in text_1.txt
+    were inflections of dictionary words, "corrected" to other words with
+    the same start (helped -> helper, has -> hash). files/words is kept
+    as it is, and words are now also accepted if taking a common ending
+    off them leaves a dictionary word, with a list of 27 irregular forms
+    (see "How it works", step 3). Together with issue 6 this takes
+    text_1.txt from 252 flagged tokens to 8. The rules have limits of
+    their own (issue 17), and some words are missing from files/words
+    altogether (issue 18).
 
  8. The tokenizer:
       - splits off every full stop, so "Mr." becomes Mr . and "3.5"
@@ -256,9 +303,10 @@ files/.
         and "itself—nameless" are checked as single words (order: ->
         order, itself—nameless -> itself, losing "nameless").
       - doesn't separate quotes from words: in apostraphe_test.txt,
-        'going and beach' are checked with the quote attached
-        ('going -> ', beach' -> beach), and he's -> he. The code meant
-        to handle apostrophes is commented out.
+        'going and beach' are checked with the quote attached. beach'
+        happens to pass as a plural possessive (issue 7), and he's as
+        a possessive of "he", but 'going -> '. The code meant to handle
+        apostrophes is commented out.
       - lets numbers through to the spell check: "48" -> "A".
 
  9. The output loses the text's layout. Every token is written followed
@@ -302,9 +350,9 @@ files/.
 
 15. The saved outputs in files/ are from older versions of the script.
     corrected_apostraphe_test.txt has one token per line and no changes,
-    while the script now gives "jake Abba said he ' to the beach".
+    while the script now gives "jake Abbot said he's ' to the beach'".
     corrected_short1.txt still has "wice" and corrected_text_1.txt has
-    the 157 changes from before issues 3-5 were fixed. ("apostraphe" in
+    the 157 changes from before issues 3-7 were fixed. ("apostraphe" in
     the two file names is also a misspelling of "apostrophe".)
 
 16. A mistake at or before the letter where the token leaves the trie
@@ -315,9 +363,34 @@ files/.
         hte -> hate          teh -> tehsil        recieve -> recidive
         acommodate -> acoma  wierd -> wierangle   beleive -> beleave
         speling -> spelding (as close as "spelling", but first in the
-        dictionary)
+        dictionary)          Thier -> Thierry
     Fixing this means looking further back up the trie, e.g. trying
     the words that start with one or two fewer letters as well, or
     comparing against the whole dictionary. The second is slow in pure
     Python: "48" already gets the whole dictionary as candidates and
     takes about half a second for that one word.
+
+17. The ending rules accept some misspellings, because they only check
+    that the stem is a word, not that the word takes that ending:
+      - regular endings on irregular words: runned, goed, childs,
+        mouses, tooths.
+      - endings on the wrong kind of word, or the wrong stem: happyly
+        (happy + -ly), writting (writ + -ing), runing (rune + -ing),
+        begining (begin + -ing without the doubled n; only 3-letter
+        words are checked for doubling).
+      - teachs: plain -s is allowed after "ch" because of words like
+        "stomachs".
+    They also miss a few real words: an ending on an irregular form
+    ("grandchildren" is fine as a word, but nothing builds it from
+    "children"), and -ier/-iest words with a 2-letter stem ("drier").
+
+18. files/words is NLTK's "words" corpus (the two are identical), the
+    Unix word list from Webster's Second International Dictionary
+    (1934). Besides having no inflected forms (issue 7), it is missing
+    some common words: near, box, kid, proud, hang and fond are the most
+    frequent lower-case words in the Brown corpus it rejects. It has few
+    modern names (Hoover, Congress, Chicago) and no hyphenated words.
+    Compared with macOS's /usr/share/dict/words it is missing 93 words
+    (e.g. acknowledgment, administered) and has 3 misspelled entries
+    (administerd, stucturelessness, transvaal), so "administerd" is
+    accepted as correct.

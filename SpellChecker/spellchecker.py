@@ -56,10 +56,165 @@ def find_prefix(root, prefix: str) -> Tuple[bool, int]:
     # check if this is the end of a word:
     return cur_node.word_finished, cur_node.counter
 
-# checks if a word exists in the dictionary
+# checks if a word exists in the dictionary (exactly as spelled)
 def word_exists(root, word: str) -> bool:
     ret_tuple = find_prefix(root, word)
     return ret_tuple[0]
+
+
+## WORD ENDINGS
+# files/words has only the base form of most words ("help", not "helps",
+# "helped", "helping"), so a word is also accepted if taking a common
+# ending off it leaves a dictionary word. Each rule is (ending, what to put
+# back): "cities" -> "citi" + "y" = "city". DOUBLE marks endings that may
+# follow a doubled consonant ("planned" -> "plan", "bigger" -> "big").
+DOUBLE = 'double'
+ENDING_RULES = [
+    ("'s", ['']),               # possessive: people's -> people
+    ("'", ['']),                # plural possessive: citizens' -> citizens
+    ('ies', ['y']),             # cities -> city, carries -> carry
+    ('ves', ['f', 'fe']),       # selves -> self, knives -> knife
+    ('men', ['man']),           # women -> woman, salesmen -> salesman
+    ('es', ['']),               # taxes -> tax, wishes -> wish
+    ('s', ['']),                # friends -> friend, helps -> help
+    ('ied', ['y']),             # multiplied -> multiply
+    ('ed', ['', 'e', DOUBLE]),  # helped -> help, believed -> believe, planned -> plan
+    ('ing', ['', 'e', DOUBLE]), # helping -> help, making -> make, putting -> put
+    ('ier', ['y']),             # happier -> happy
+    ('iest', ['y']),            # happiest -> happy
+    ('er', ['', 'e', DOUBLE]),  # stronger -> strong, larger -> large, bigger -> big
+    ('est', ['', 'e', DOUBLE]), # strongest -> strong, largest -> large
+    ('ily', ['y']),             # primarily -> primary, easily -> easy
+    ('ly', ['', 'le']),         # finally -> final, simply -> simple
+]
+
+# Common irregular forms that don't follow the rules and aren't in
+# files/words themselves (most are: "went", "said", "men" and "mice" are)
+IRREGULAR_FORMS = {
+    'has': 'have', 'became': 'become', 'began': 'begin', 'bled': 'bleed',
+    'blew': 'blow', 'forgave': 'forgive', 'forgiven': 'forgive',
+    'heard': 'hear', 'hid': 'hide', 'held': 'hold', 'paid': 'pay',
+    'awoken': 'awake', 'woken': 'wake', 'withdrew': 'withdraw',
+    'undertaken': 'undertake', 'undergone': 'undergo',
+    'overcame': 'overcome', 'foresaw': 'foresee', 'foreseen': 'foresee',
+    'overheard': 'overhear', 'overthrew': 'overthrow',
+    'overthrown': 'overthrow', 'repaid': 'repay',
+    'children': 'child', 'feet': 'foot', 'geese': 'goose', 'lice': 'louse',
+}
+
+# Spelling rules for which stems an ending can follow
+VOWEL_ENDINGS = ('ing', 'ed', 'er', 'est')
+KEEP_E = ('ee', 'oe', 'ye')
+
+VOWELS = 'aeiou'
+
+# Short words that end consonant-vowel-consonant (run, sit, big) double
+# their last letter before -ing, -ed, -er and -est. Only 3-letter words are
+# checked, because longer ones often don't double (visiting, opening); w, x
+# and y are never doubled (bowing, fixing, toying).
+def must_double(stem: str) -> bool:
+    return (len(stem) == 3
+            and stem[0] not in VOWELS and stem[1] in VOWELS
+            and stem[2] not in VOWELS + 'wxy')
+
+def ending_fits(stem: str, ending: str) -> bool:
+    if ending in ('ier', 'iest'):
+        # happier -> happy, but "thier" isn't "thy" + -ier
+        return len(stem) >= 3
+    if ending == 'es':
+        # -es only after a hissing sound or o: taxes, wishes, heroes
+        return stem.endswith(('s', 'x', 'z', 'ch', 'sh', 'o'))
+    if ending == 's':
+        # and not plain -s after one: "taxs", "wishs" ("ch" can be a k
+        # sound, as in "stomachs", so it is allowed)
+        return not stem.endswith(('s', 'x', 'z', 'sh'))
+    return True
+
+# Returns the possible base forms of a word: what it could be with one
+# ending taken off (after a possessive 's or ', if there is one).
+def base_forms(word: str) -> list[str]:
+    forms = []
+    if word in IRREGULAR_FORMS:
+        forms.append(IRREGULAR_FORMS[word])
+    words = [word]
+    for possessive in ["'s", "'"]:
+        if word.endswith(possessive) and len(word) > len(possessive):
+            words.append(word[:-len(possessive)])
+    for w in words:
+        for ending, replacements in ENDING_RULES[2:]:   # not the possessives
+            if not w.endswith(ending):
+                continue
+            stem = w[:-len(ending)]
+            if len(stem) < 2:       # "is" isn't "i" + "s"
+                continue
+            if not ending_fits(stem, ending):
+                continue
+            for replacement in replacements:
+                if (replacement == '' and ending in VOWEL_ENDINGS
+                        and stem.endswith('e') and stem[-2:] not in KEEP_E):
+                    # The e is dropped before these endings: "hoping",
+                    # not "hopeing" (but "seeing", "hoeing", "dyeing")
+                    continue
+                if (replacement == '' and ending in VOWEL_ENDINGS
+                        and must_double(stem)):
+                    # "running", not "runing"
+                    continue
+                if replacement == DOUBLE:
+                    # planned -> plann -> plan
+                    if len(stem) >= 3 and stem[-1] == stem[-2]:
+                        forms.append(stem[:-1])
+                else:
+                    forms.append(stem + replacement)
+    forms.extend(words[1:])         # the word without its possessive
+    return forms
+
+
+## CHECKING A WORD
+# A word is spelled correctly if it is in the dictionary, or if it is with
+# one of the common endings above taken off. Case: a word with capital
+# letters is also accepted if its lower-case form is a word, so "This" at
+# the start of a sentence and "THIS" in a heading are fine, but "america"
+# isn't accepted just because "America" is.
+def case_forms(word: str) -> list[str]:
+    forms = [word]
+    if word != word.lower():
+        forms.append(word.lower())
+    return forms
+
+def is_spelled_correctly(root, word: str) -> bool:
+    for form in case_forms(word):
+        if word_exists(root, form):
+            return True
+        for base in base_forms(form):
+            if word_exists(root, base):
+                return True
+    return False
+
+# Matches the case of a suggestion to the word it replaces: a suggestion
+# for "Wioll" is "Will", and for "WIOLL" it is "WILL". Suggestions that
+# already have capitals (names) are left as they are.
+def match_case(suggestion: str, word: str) -> str:
+    if suggestion != suggestion.lower():
+        return suggestion
+    if len(word) > 1 and word.isupper():
+        return suggestion.upper()
+    if word[0].isupper():
+        return suggestion[0].upper() + suggestion[1:]
+    return suggestion
+
+# Finds the candidate replacements for a misspelled word, in the word's own
+# case and, for a word with capitals, in lower case too ("Teh" gets the
+# candidates for "teh" as well as for "Teh"), and returns the closest ones.
+def correct(root, word: str) -> list[str]:
+    candidates = []
+    for form in case_forms(word):
+        for candidate in get_similar_words(root, form):
+            candidate = match_case(candidate, word)
+            candidates.append(candidate)
+    # The same candidate can be found twice ("Will" the name and "will"
+    # turned into "Will"); keep the first
+    candidates = list(dict.fromkeys(candidates))
+    return suggest(candidates, word)
 
 # creates a pointer to the root of a trie created by all words in a dictionary
 def trie_dict(fname):
@@ -260,11 +415,10 @@ def run(input_fname, output_fname, dict_fname):
     replacing = os.path.exists(output_fname)
     with open(output_fname, 'w') as f:
         for word in tokens:
-            if word_exists(root, word):
+            if is_spelled_correctly(root, word):
                 f.write(word + ' ')
             else:
-                similar_words = get_similar_words(root, word)
-                suggestions = suggest(similar_words, word)
+                suggestions = correct(root, word)
                 if len(suggestions) > 0: # if there is a spell correction:
                     print('Changing %s to %s'%(word,suggestions[0]))    # prints word and line
                     f.write(suggestions[0] + ' ')                             # write correct spelling
