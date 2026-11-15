@@ -4,7 +4,7 @@ About:
 encoding type program runs on:
     Only tested and run on ascii
 data cleaning methods you employed:
-    Only using nltk word tokenizing
+    Paragraphs split into sentences with nltk.sent_tokenize, then nltk word tokenizing
 information is in Language Models (bigrams, trigrams, etc):
     Bigrams only
 method of smoothing you are using:
@@ -24,6 +24,15 @@ from collections import Counter
 # for large counts, where N_(c+1) is often 0 or very noisy.
 GT_MAX_COUNT = 5
 
+# Token placed before the first word of every sentence, so the model learns
+# which words tend to start a sentence. It can't clash with a real token:
+# nltk.word_tokenize() splits "<s>" into "<", "s", ">".
+START_TOKEN = '<s>'
+
+# Default mode holds out every TEST_EVERY-th sentence of each author for
+# testing and trains on the rest (a 90/10 split).
+TEST_EVERY = 10
+
 # Language model to pass to methods to calculate probabilities
 class LanguageModel():
     def __init__(self, author: str):
@@ -37,35 +46,39 @@ class LanguageModel():
         self.backoff_weight = {}    # prev_word -> Katz backoff weight alpha
         self.author = author
 
-    def create_lm(self, fname: str):
-        tokens = []
-        with open(fname, 'r') as f:
-            prev_token = ''
-            self.unigrams[prev_token] = 1
-            for line in f:
-                new_tokens = nltk.word_tokenize(line)
-                for token in new_tokens:
-                    # Add to all tokens
-                    tokens.append(token)
-                    # update unigram count
-                    if token in self.unigrams.keys():  
-                        self.unigrams[token] += 1  # if token already exists, increase its count
-                    else:
-                        self.unigrams[token] = 1   # if token does not exist, add it to the dictionary
-                    # update bigram count
-                    if (prev_token, token) in self.bigrams.keys():
-                        self.bigrams[(prev_token, token)] += 1
-                    else:
-                        self.bigrams[(prev_token, token)] = 1
-                    # update the previous token for bigram counts
-                    prev_token = token
+    # Counts unigrams and bigrams in sentences, a list of sentences that are
+    # each a list of tokens. Every sentence starts again from START_TOKEN, so
+    # bigrams never run from one sentence into the next, and
+    # P(first word | START_TOKEN) is learned from every sentence start.
+    def train(self, sentences: list):
+        for tokens in sentences:
+            prev_token = START_TOKEN
+            for token in tokens:
+                # update unigram count
+                if token in self.unigrams.keys():
+                    self.unigrams[token] += 1  # if token already exists, increase its count
+                else:
+                    self.unigrams[token] = 1   # if token does not exist, add it to the dictionary
+                # update bigram count
+                if (prev_token, token) in self.bigrams.keys():
+                    self.bigrams[(prev_token, token)] += 1
+                else:
+                    self.bigrams[(prev_token, token)] = 1
+                # update the previous token for bigram counts
+                prev_token = token
 
-        # includes the '' start token, so unigram probabilities add up to 1
+        # START_TOKEN is not a unigram (it's never predicted as a word), so
+        # this is the number of real tokens and unigram probabilities add up
+        # to 1
         self.total_words = sum(self.unigrams.values())
         # N_c: how many different bigrams were seen exactly c times. This is
         # computed once counting is finished, so each bigram is counted
         # under its final count only.
         self.frequencies = Counter(self.bigrams.values())
+
+    # Builds the model from every sentence in a text file
+    def create_lm(self, fname: str):
+        self.train([tokens for _, tokens in read_sentences(fname)])
 
     # Works out the smoothed probabilities. Call this after create_lm(), once
     # every author's model has been built:
@@ -124,6 +137,28 @@ class LanguageModel():
         return self.unknown_unigram
 
 
+# Reads a text file and splits it into sentences. Paragraphs are separated
+# by blank lines. Inside a paragraph the hard-wrapped lines are joined back
+# together, then nltk.sent_tokenize() splits it into sentences.
+# Returns a list of (sentence text, list of tokens).
+def read_sentences(fname: str):
+    with open(fname, 'r') as f:
+        text = f.read()
+    sentences = []
+    for paragraph in re.split(r'\n\s*\n', text):
+        paragraph = ' '.join(paragraph.split())   # join the wrapped lines
+        for sentence in nltk.sent_tokenize(paragraph):
+            tokens = nltk.word_tokenize(sentence)
+            if tokens:
+                sentences.append((sentence, tokens))
+    return sentences
+
+# Reads the author list: one author text file per line
+def read_authorlist(authorlist: str):
+    with open(authorlist, 'r') as f:
+        return [line.strip() for line in f if line.strip()]
+
+
 # Calculate probability that wn given wn-1 in a text file
 def get_prob_of_w(fname: str, w0: str, w1: str):
     tokens = []
@@ -159,7 +194,7 @@ def get_prob_of_w(fname: str, w0: str, w1: str):
 #   - prev_word never seen in training: P = P(word)
 #   lm:        the author's language model to use
 #   word:      the current word
-#   prev_word: the word before it ('' at the start of a line)
+#   prev_word: the word before it (START_TOKEN at the start of a sentence)
 def gt_get_prob_of_w(lm: LanguageModel, word: str, prev_word: str):
     prev_count = lm.context_counts.get(prev_word, 0)
     if prev_count == 0:
@@ -169,15 +204,14 @@ def gt_get_prob_of_w(lm: LanguageModel, word: str, prev_word: str):
         return lm.gt_adjusted_count(c) / prev_count
     return lm.backoff_weight[prev_word] * lm.unigram_prob(word)
 
-# Scores a sentence with lm. Returns its cost: the sum of -log10
-# P(word | prev_word) over every word. Lower cost = more likely, so the
-# author whose model gives the lowest cost is the best guess.
+# Scores a sentence (a list of tokens) with lm. Returns its cost: the sum
+# of -log10 P(word | prev_word) over every word. Lower cost = more likely,
+# so the author whose model gives the lowest cost is the best guess.
 # Costs are added because -log(a*b) = -log(a) + -log(b); working in logs
 # stops the product of many small probabilities underflowing to 0.
-def get_prob_of_sentence(lm: LanguageModel, sentence: str):
-    tokens = nltk.word_tokenize(sentence)
+def get_prob_of_sentence(lm: LanguageModel, tokens: list):
     total_cost = 0
-    prev_token = ''
+    prev_token = START_TOKEN
     for token in tokens:
         word_prob = gt_get_prob_of_w(lm, token, prev_token)
         total_cost += -math.log10(word_prob)
@@ -235,108 +269,51 @@ def smooth_models(models: list):
         lm.smooth(len(vocab) + 1)
 
 
+# Returns the model (author) whose cost for the sentence is lowest, i.e.
+# the author most likely to have written it
+def classify(models: list, tokens: list):
+    return min(models, key=lambda lm: get_prob_of_sentence(lm, tokens))
+
+
 # No test flag
-# automatically extract a development from the author data, then train on the remaining training data
+# Splits each author's text into sentences, holds out every TEST_EVERY-th
+# sentence for testing and trains on the rest, then prints how many of
+# each author's test sentences were guessed correctly. The split is done in
+# memory, so no files are written.
 def run_no_test_flag(authorlist: str):
-    # Extract all texts from authorlist file
-    txt_fnames = []
-    dev_txt_fnames = []
-    training_txt_fnames = []
-    with open (authorlist, 'r') as f:
-        for line in f:
-            line = line.strip()
-            txt_fnames.append(line)
-    
-    for fname in txt_fnames:
-        # For each text file, create 2 new text files
-        dev_txt_name = 'dev_' + fname
-        dev_txt_fnames.append(dev_txt_name)
-        train_txt_name = 'training_' + fname
-        training_txt_fnames.append(train_txt_name)
-        with open(fname, 'r') as txt_file:
-            with open(dev_txt_name, 'w') as dev_txt:
-                with open(train_txt_name, 'w') as training_txt:
-                    count = 0
-                    for line in txt_file:
-                        if count%10 == 0: # if %5, write to training
-                            training_txt.write(line)
-                        else:            # else, write to development
-                            dev_txt.write(line)
-                        count+=1
-
-
-    # Create language models based on development_texts
     models = []
-    for text in dev_txt_fnames:
-        new_model = LanguageModel(author=text)
-        #print('New Model name: %s'%new_model.author)
-        new_model.create_lm(text)
+    test_sets = []
+    for fname in read_authorlist(authorlist):
+        sentences = [tokens for _, tokens in read_sentences(fname)]
+        train = [s for i, s in enumerate(sentences) if i % TEST_EVERY != 0]
+        test = [s for i, s in enumerate(sentences) if i % TEST_EVERY == 0]
+        new_model = LanguageModel(author=fname)
+        new_model.train(train)
         models.append(new_model)
+        test_sets.append(test)
     smooth_models(models)
 
-    # Test language models on training_texts
-    for fname in training_txt_fnames:
-        correct_guess_count = 0
-        total_guesses = 0
-        author_name = re.sub('.txt', '', fname)
-        author_name = re.sub('training_', '', author_name)
-
-        with open(fname, 'r') as training_txt:
-            for line in training_txt:
-                # Blank lines have no words to score, so every model would
-                # tie at a cost of 0. Skip them instead of counting a guess.
-                if not line.strip():
-                    continue
-                lowest_cost = math.inf   # lowest cost = most likely author
-                author = ''
-                for lm in models:
-                    new_cost = get_prob_of_sentence(lm, line)
-                    if new_cost < lowest_cost:
-                        lowest_cost = new_cost
-                        author = lm.author
-                author_guess = re.sub('.txt', '', author)
-                author_guess = re.sub('dev_', '', author_guess)
-                if author_guess == author_name:
-                    correct_guess_count+=1
-                total_guesses+=1
-            print('%s   %i/%i correct'%(author_name,correct_guess_count,total_guesses))
+    for lm, test in zip(models, test_sets):
+        correct_guess_count = sum(1 for tokens in test if classify(models, tokens) is lm)
+        author_name = lm.author.removesuffix('.txt')
+        print('%s   %i/%i correct'%(author_name, correct_guess_count, len(test)))
     return 0
 
 # with test flag
-# use the entirety of data in each author file to train a language model, 
-# then output classification results for each line in the given file testfile
+# use the entirety of data in each author file to train a language model,
+# then output the most likely author for each sentence in the file test_fname
 def run_with_test_flag(authorlist: str, test_fname: str):
-    # create a list of file names to create language models from
-    txt_fnames = []
     models = []
-    with open (authorlist, 'r') as f:
-        for line in f:
-            line = line.strip()
-            txt_fnames.append(line)
-    # Create all language models
-    for fname in txt_fnames:
+    for fname in read_authorlist(authorlist):
         new_model = LanguageModel(author=fname)
         new_model.create_lm(fname)
         models.append(new_model)
     smooth_models(models)
 
-    # Test each language model on the fname
-    with open(test_fname, 'r') as f:
-        # count is the line number in the file, so the output still lines up
-        # with the input when blank lines are skipped
-        for count, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:    # blank line: nothing to classify
-                continue
-            lowest_cost = math.inf   # lowest cost = most likely author
-            author = ''
-            for lm in models:
-                new_cost = get_prob_of_sentence(lm, line)
-                if new_cost < lowest_cost:
-                    lowest_cost = new_cost
-                    author = lm.author
-
-            print('Line %i: %s'%(count, author))
+    for count, (sentence, tokens) in enumerate(read_sentences(test_fname), start=1):
+        author = classify(models, tokens).author
+        preview = sentence if len(sentence) <= 50 else sentence[:47] + '...'
+        print('%-13s %-12s %s'%('Sentence %i:'%count, author, preview))
 
 def interface():
     # check for correct number of command line arguments

@@ -3,30 +3,41 @@ Author Language Model Classifier
 
 What it does
 ------------
-classifier.py guesses who wrote a piece of text. It builds one language.  
-model per author from sample text, then scores each line of new text with
-every model and picks the author whose model fits best.
+classifier.py guesses who wrote a piece of text. It builds one language
+model per author from sample text, then scores each sentence of new text
+with every model and picks the author whose model fits best.
 
-The sample data is four authors (one excerpt each, ~10,000-20,000 lines):
+The sample data is four authors, with excerpts from several of their books
+(10,000-20,000 lines each):
 
-  austen.txt    Jane Austen, Emma
-  dickens.txt   Charles Dickens, A Tale of Two Cities
-  wilde.txt     Oscar Wilde, The Picture of Dorian Gray
-  tolstoy.txt   Leo Tolstoy, War and Peace
+  austen.txt    Jane Austen: Emma, Sense and Sensibility, Pride and Prejudice
+  dickens.txt   Charles Dickens: A Tale of Two Cities, David Copperfield
+  wilde.txt     Oscar Wilde: The Picture of Dorian Gray, The Canterville
+                Ghost and other stories, The Portrait of Mr. W. H.
+  tolstoy.txt   Leo Tolstoy: War and Peace, Anna Karenina
 
 How it works
 ------------
-1. Language model (LanguageModel.create_lm)
-   Each author's file is split into tokens with nltk.word_tokenize(), and
-   the model counts:
+1. Sentences (read_sentences)
+   The text files are hard-wrapped at about 70 characters, so a line is
+   usually a fragment of a sentence. Each file is split into paragraphs at
+   blank lines, the lines of each paragraph are joined back together, and
+   nltk.sent_tokenize() splits the paragraph into sentences. Each sentence
+   is split into tokens with nltk.word_tokenize(). Sentences average 17-25
+   tokens, depending on the author.
+
+2. Language model (LanguageModel.train / create_lm)
+   For each author the model counts:
      - unigrams: how often each token occurs
      - bigrams:  how often each pair of adjacent tokens occurs
      - N_c:      how many different bigrams occur exactly c times
                  (the "frequency of frequencies" Good-Turing needs)
-   It's a bigram model: the probability of a sentence is the product of
-   P(word | previous word) for every word.
+   Every sentence starts with a start token, <s>, so the model also learns
+   which words tend to begin a sentence, and bigrams never run from one
+   sentence into the next. It's a bigram model: the probability of a
+   sentence is the product of P(word | previous word) for every word.
 
-2. Smoothing (LanguageModel.smooth and gt_get_prob_of_w)
+3. Smoothing (LanguageModel.smooth and gt_get_prob_of_w)
    A bigram that never appears in an author's text would get probability
    0 and rule that author out completely. Smoothing moves some probability
    from seen bigrams to unseen ones. The script uses Good-Turing smoothing
@@ -57,24 +68,24 @@ How it works
      words. That's why smoothing runs in a separate step (smooth_models)
      after all the models are built.
 
-3. Scoring and classification (get_prob_of_sentence)
-   Each line is scored against every author's model, and the author whose
-   model gives it the lowest cost (the highest probability) is the guess.
-   The cost is the sum of -log10 P(word | prev_word) over the line's words.
-   Working in logs stops the product of many small probabilities from
-   underflowing to 0.
+4. Scoring and classification (get_prob_of_sentence, classify)
+   Each sentence is scored against every author's model, and the author
+   whose model gives it the lowest cost (the highest probability) is the
+   guess. The cost is the sum of -log10 P(word | prev_word) over the
+   sentence's words. Working in logs stops the product of many small
+   probabilities from underflowing to 0.
 
 Files in this folder
 --------------------
   classifier.py          the script
   authorlist1            the author files to use, one file name per line
   austen.txt, dickens.txt, wilde.txt, tolstoy.txt
-                         the author text (ASCII)
-  test.txt               sample input for -test mode (12 lines of Emma)
-  dev_*.txt, training_*.txt
-                         train/test split written by default mode (see
-                         Known Issues #7 and #8; the names are swapped)
-  txt_ascii/             identical copies of the four author files
+                         the author text (ASCII), used for training
+  test.txt               sample input for -test mode: one passage per
+                         author, removed from the author files (see
+                         "How to run")
+  txt_ascii/             the original author files, before the test.txt
+                         passages were taken out (not used)
   txt_utf8/              UTF-8 versions of the author files (not used)
   words                  English word list (not used; a copy of
                          SpellChecker/files/words)
@@ -96,62 +107,87 @@ relative to the current directory.
 
       python3 classifier.py authorlist1
 
-  For each author file it writes dev_<author>.txt (90% of the lines; used
-  to build the model) and training_<author>.txt (every 10th line; used for
-  testing), overwriting any existing ones. Each non-blank test line is
-  classified, and it prints how many lines of each author were guessed
-  correctly.
+  Each author's text is split into sentences. Every 10th sentence
+  (TEST_EVERY) is held out for testing and the model is trained on the
+  other 90%. The split is done in memory; no files are written. Each test
+  sentence is classified, and it prints how many of each author's test
+  sentences were guessed correctly.
 
   Expected output:
 
-      austen   845/1070 correct
-      dickens   705/1012 correct
-      wilde   582/800 correct
-      tolstoy   1327/1630 correct
+      austen   484/576 correct
+      dickens   557/694 correct
+      wilde   495/677 correct
+      tolstoy   900/1064 correct
 
-  That's 76.7% overall. Guessing at random would give 25%.
+  That's 80.9% overall. Guessing at random would give 25%.
 
-  -test mode: train on the full author files and classify every line of
-  another file:
+  -test mode: train on the full author files and classify every sentence
+  of another file:
 
       python3 classifier.py authorlist1 -test test.txt
 
   The -test flag must come second, after the author list. Output is one
-  line per non-blank input line, naming the author file that scored best.
-  The line numbers are the line numbers in the input file, so they still
-  match it when blank lines are skipped:
+  line per sentence: its number, the author file that scored best, and
+  the start of the sentence.
 
-      Line 1: austen.txt
-      Line 2: austen.txt
+  test.txt has one passage per author. Each passage was taken out of its
+  author file, so none of it is in the training data:
+
+      Sentences  1-7   Austen, Emma
+      Sentences  8-13  Dickens, David Copperfield
+      Sentences 14-26  Wilde, The Picture of Dorian Gray
+      Sentences 27-33  Tolstoy, Anna Karenina
+
+  Expected output (abridged):
+
+      Sentence 1:   austen.txt   "There is one thing, Emma, which a man can alwa...
+      Sentence 2:   austen.txt   It is Frank Churchill's duty to pay this attent...
       ...
-      Line 12: austen.txt
+      Sentence 7:   tolstoy.txt  '-If he would say so to her at once, in the ton...
+      Sentence 8:   dickens.txt  I thought it affecting to see such a sturdy fel...
+      ...
+      Sentence 22:  dickens.txt  Yes.
+      ...
+      Sentence 33:  tolstoy.txt  For the first time in his life he knew the bitt...
 
-  test.txt is all Austen, and all 12 lines are labeled austen.txt. (Before
-  issues #1-#3 were fixed it got 8 of 12.) It's an easy test, though: see
-  Known Issues #9.
+  26 of the 33 sentences are right: Austen 6/7, Dickens 3/6, Wilde 11/13
+  and Tolstoy 6/7. The misses include a one-word sentence ("Yes."), a
+  fragment where sent_tokenize split a sentence at a quote (sentence 7),
+  and half of the Dickens passage, whose short first-person sentences ("I
+  was affected by the story altogether.") could belong to anyone.
+
+  To try your own text, put it in a file (it can be hard-wrapped;
+  separate paragraphs with blank lines) and pass that instead of
+  test.txt.
 
 
 Known Issues
 ============
 These were confirmed by running the script with NLTK 3.10.3 and Python 3.14.
 Line numbers refer to classifier.py. Accuracy figures use the default-mode
-split, with blank lines left out unless stated otherwise.
+split. Up to #6 the script classified physical lines; from #10 on it
+classifies sentences.
 
 Accuracy so far:
 
-  Original code (blank lines included)                       32.9%
-  #1-#3 fixed (blank lines included)                         44.6%
-  #1-#3 fixed, blank lines skipped                           50.2%
-  #1-#5 fixed (blank lines included)                         65.9%
-  #1-#6 fixed: current code (blank lines skipped)            76.7%
+  Original code, lines (blank lines included)                32.9%
+  #1-#3 fixed, lines (blank lines included)                  44.6%
+  #1-#3 fixed, lines (blank lines skipped)                   50.2%
+  #1-#5 fixed, lines (blank lines included)                  65.9%
+  #1-#6 fixed, lines (blank lines skipped)                   76.7%
+  #1-#11 fixed: current code, sentences                      80.9%
 
-  For comparison, other ways of smoothing the same bigram counts:
+  For comparison, other ways of smoothing the same bigram counts (lines,
+  blank lines skipped):
     add-one (Laplace)                                        68.6%
     interpolation: 0.7 * P(word | previous) + 0.3 * P(word)  76.1%
 
-Each test line is a fragment of about 13 tokens (see #10), so 100% isn't
-realistic. The fixed Good-Turing model gets about three lines in four
-right.
+The line and sentence figures aren't measured on exactly the same test
+text: holding out every 10th sentence picks different text from holding
+out every 10th line. But a sentence (17-25 tokens) gives the model more to
+go on than a line fragment (about 13), which is where most of the gain
+comes from.
 
 Wrong results in scoring
 ------------------------
@@ -234,46 +270,57 @@ Wrong results in scoring
    the 5,600 test lines are blank, so Austen (first in authorlist1) got
    230 free "correct" answers and every other author's blank lines counted
    as wrong. -test mode also printed an author for blank lines.
-   Both modes now skip blank lines. In -test mode the printed line numbers
-   still match the input file (the loop uses enumerate), so skipped lines
-   just leave a gap.
+   Both modes now skipped blank lines. (Since #10 the script classifies
+   sentences, which are never empty, so blank lines no longer come up.)
 
 Evaluation and data
 -------------------
-7. The train/test file names are swapped (lines 259-265).
-   Every 10th line goes to training_<author>.txt and is used for testing.
-   The other 90% goes to dev_<author>.txt and is used to build the models.
-   A 90/10 split is fine, but the names are backwards. The comment
-   "if %5, write to training" is also out of date.
+7. [FIXED] The train/test file names were swapped.
+   Every 10th line went to training_<author>.txt and was used for testing,
+   and the other 90% went to dev_<author>.txt and was used to build the
+   models. The split is now done in memory (see #8) with clear names:
+   every TEST_EVERY-th (10th) sentence goes into the test set and the rest
+   into the training set.
 
-8. Default mode overwrites the dev_*.txt and training_*.txt files every
-   time it runs. These generated files are committed to the repo. They
-   come out identical each time, but they don't need to be stored or
-   written to disk at all: the split can be done in memory.
+8. [FIXED] Default mode overwrote the dev_*.txt and training_*.txt files
+   every time it ran, and those generated files were committed to the
+   repo. run_no_test_flag() now splits each author's sentences in memory
+   and writes nothing, and the eight split files were deleted from the
+   repo.
 
-9. test.txt is part of the training data.
-   All 12 lines of test.txt appear word for word in austen.txt, which is
-   what -test mode trains on (11 of them are also in dev_austen.txt). So
-   it doesn't test text the model hasn't seen, which is why it now gets
-   all 12 right. A better test file would use Austen text that isn't in
-   austen.txt.
+9. [FIXED] test.txt was part of the training data.
+   All 12 lines of the old test.txt (a passage from Emma) appeared word
+   for word in austen.txt, which -test mode trains on. test.txt now has one
+   passage per author, and each passage was removed from its author file,
+   so none of it is in the training data (see "How to run"). The old
+   Austen passage is still the first one, but it's no longer in
+   austen.txt. On the new file the classifier gets 26 of 33 sentences
+   right.
 
-10. It classifies physical lines, not sentences.
-    The text is hard-wrapped at about 70 characters, so each "line" is a
-    fragment of about 13 tokens (words and punctuation) that often starts
-    and ends mid-sentence.
-    That's very little evidence to identify an author from. Classifying
-    sentences or paragraphs would be more accurate.
+10. [FIXED] It classified physical lines, not sentences.
+    The text is hard-wrapped at about 70 characters, so each "line" was a
+    fragment of about 13 tokens that often started and ended mid-sentence.
+    read_sentences() now splits each file into paragraphs at blank lines,
+    joins each paragraph's lines, and splits it into sentences with
+    nltk.sent_tokenize(). Both modes classify sentences: default mode holds
+    out every 10th sentence (80.9% correct), and -test mode prints one
+    guess per sentence of the input file.
+    sent_tokenize isn't perfect on this text: for example, it splits
+    "...set off to-morrow.'-If he would say so..." into two sentences at
+    the quote.
 
-11. Training and scoring treat line breaks differently.
-    During training, bigrams carry on across line breaks (prev_token is not
-    reset), but when scoring, every line starts again from ''. The ''
-    start token is counted only once per file (line 44), so P(first word
-    | '') is based on a count of 1.
+11. [FIXED] Training and scoring treated line breaks differently.
+    During training, bigrams carried on across line breaks, but when
+    scoring every line started again from ''. The '' start token was
+    counted only once per file, so P(first word | '') was based on a count
+    of 1. Now training and scoring both work on sentences, and every
+    sentence starts with START_TOKEN ('<s>') in both. The start token is
+    counted once per sentence (5,759 times for Austen), and it isn't
+    counted as a word, so unigram probabilities still add up to 1.
 
 Usability
 ---------
-12. Command-line handling (lines 341-354).
+12. Command-line handling (lines 318-331).
     The -test flag has to be the second argument. There's no usage
     message: running with no arguments only prints "Please supply an
     authorlist", and wrong arguments print "Wrong number of arguments" or
@@ -281,8 +328,9 @@ Usability
 
 13. Author names in the output.
     -test mode prints the file name ("austen.txt") instead of the author.
-    Default mode strips the names with re.sub('.txt', '', ...), where '.'
-    matches any character; name.removesuffix('.txt') is safer.
+    (Default mode now uses name.removesuffix('.txt'), part of the #7 / #8
+    rewrite; it used re.sub('.txt', '', ...), where '.' matches any
+    character.)
 
 14. File names in the author list are relative to the current directory,
     not to the author list's folder, so the script only works when run from
@@ -295,12 +343,14 @@ Usability
 
 Cleanup
 -------
-16. Unused and broken code (lines 128-149, 188-225).
+16. Unused and broken code (lines 163-184, 222-259).
     - test_prob_of_sentence(), test_good_turing() and test_lm() call
       LanguageModel() without the required author argument (TypeError), and
       use paths like '/txt_ascii/austen.txt', which point to the root of
       the file system. They also don't call smooth_models(), which every
-      model now needs before it can score anything.
+      model now needs before it can score anything, and
+      test_prob_of_sentence() passes a string to get_prob_of_sentence(),
+      which now takes a list of tokens.
     - get_prob_of_w() (an add-one version) is only used by a test function.
       It also checks "token in tokens" against a list, which gets very slow
       on large files.
@@ -308,10 +358,12 @@ Cleanup
 17. Small cleanups:
     - "from tokenize import Double" (line 17) is unused. It comes from
       Python's own source-code tokenizer, not NLTK.
-    - The "x in d.keys()" counting blocks in create_lm() can use
+    - The "x in d.keys()" counting blocks in LanguageModel.train() can use
       collections.Counter.
-    - The tokens list in create_lm() is no longer used.
-    (The docstring's "Good-Touring" was corrected as part of #4 and #5.)
+    (The docstring's "Good-Touring" was corrected as part of #4 and #5, and
+    the unused tokens list was removed with the #10 rewrite.)
 
-18. Unused files: words, txt_ascii/ (identical copies of the top-level
-    author files), txt_utf8/ and test.py.
+18. Unused files: words, txt_ascii/, txt_utf8/ and test.py.
+    txt_ascii/ and txt_utf8/ are the original author files, so they still
+    contain the test.txt passages. Don't train on them with test.txt, or
+    the test passages will be in the training data again.
