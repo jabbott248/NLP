@@ -12,6 +12,8 @@ method of smoothing you are using:
 No other tweaks were made
 """
 
+import argparse
+import os
 import sys
 import re
 from tokenize import Double
@@ -153,10 +155,28 @@ def read_sentences(fname: str):
                 sentences.append((sentence, tokens))
     return sentences
 
-# Reads the author list: one author text file per line
+# Author name for a text file: its name without the folder or extension,
+# e.g. 'texts/austen.txt' -> 'austen'
+def author_name(fname: str):
+    return os.path.splitext(os.path.basename(fname))[0]
+
+# Reads the author list: one author text file per line (blank lines are
+# ignored). Relative file names are looked up in the author list's own
+# folder, so the script works from any directory. Exits with an error if
+# the list has fewer than two authors or a file is missing.
 def read_authorlist(authorlist: str):
+    folder = os.path.dirname(authorlist)
     with open(authorlist, 'r') as f:
-        return [line.strip() for line in f if line.strip()]
+        fnames = [os.path.join(folder, line.strip()) for line in f if line.strip()]
+    if len(fnames) < 2:
+        sys.exit(f"Error: {authorlist} lists {len(fnames)} author file(s); "
+                 "it needs at least two to choose between.")
+    for fname in fnames:
+        if not os.path.isfile(fname):
+            sys.exit(f"Error: author file '{fname}' (listed in {authorlist}) "
+                     "not found. File names are relative to the author "
+                     "list's folder.")
+    return fnames
 
 
 # Calculate probability that wn given wn-1 in a text file
@@ -287,7 +307,7 @@ def run_no_test_flag(authorlist: str):
         sentences = [tokens for _, tokens in read_sentences(fname)]
         train = [s for i, s in enumerate(sentences) if i % TEST_EVERY != 0]
         test = [s for i, s in enumerate(sentences) if i % TEST_EVERY == 0]
-        new_model = LanguageModel(author=fname)
+        new_model = LanguageModel(author=author_name(fname))
         new_model.train(train)
         models.append(new_model)
         test_sets.append(test)
@@ -295,8 +315,7 @@ def run_no_test_flag(authorlist: str):
 
     for lm, test in zip(models, test_sets):
         correct_guess_count = sum(1 for tokens in test if classify(models, tokens) is lm)
-        author_name = lm.author.removesuffix('.txt')
-        print('%s   %i/%i correct'%(author_name, correct_guess_count, len(test)))
+        print('%s   %i/%i correct'%(lm.author, correct_guess_count, len(test)))
     return 0
 
 # with test flag
@@ -305,34 +324,70 @@ def run_no_test_flag(authorlist: str):
 def run_with_test_flag(authorlist: str, test_fname: str):
     models = []
     for fname in read_authorlist(authorlist):
-        new_model = LanguageModel(author=fname)
+        new_model = LanguageModel(author=author_name(fname))
         new_model.create_lm(fname)
         models.append(new_model)
     smooth_models(models)
 
+    width = max(len(lm.author) for lm in models)   # line up the output
     for count, (sentence, tokens) in enumerate(read_sentences(test_fname), start=1):
         author = classify(models, tokens).author
         preview = sentence if len(sentence) <= 50 else sentence[:47] + '...'
-        print('%-13s %-12s %s'%('Sentence %i:'%count, author, preview))
+        print('%-13s %-*s   %s'%('Sentence %i:'%count, width, author, preview))
+
+def download_nltk_data():
+    # 'punkt' is used by NLTK before 3.8.2, 'punkt_tab' by 3.8.2 and later
+    resources = [
+        ('tokenizers/punkt', 'punkt'),
+        ('tokenizers/punkt_tab', 'punkt_tab'),
+    ]
+    for path, package in resources:
+        try:
+            nltk.data.find(path)
+        except LookupError:
+            if not nltk.download(package, quiet=True):
+                sys.exit(f"Error: could not download NLTK package '{package}'. "
+                         "Check your internet connection (on macOS, see the "
+                         "certificate step in the top-level README) and try "
+                         "again.")
 
 def interface():
-    # check for correct number of command line arguments
-    if (len(sys.argv) == 1):
-        print('Please supply an authorlist')
-    elif (len(sys.argv) == 2):
-        # RUN WITHOUT A TEST FLAG
-        run_no_test_flag(sys.argv[1])
-    elif (len(sys.argv) == 4):  # automatically extract a development from the author data, then train on the remaining training data  
-        if sys.argv[2] == '-test':
-            run_with_test_flag(sys.argv[1], sys.argv[3])
-        else:
-            print('No -test flag')
-    else: # check for test flag
-        print('Wrong number of arguments')
+    parser = argparse.ArgumentParser(
+        prog='classifier.py',
+        description='Guess which author wrote each sentence of a text, using one\n'
+                    'bigram language model per author.',
+        epilog='examples:\n'
+               '  python3 classifier.py authorlist1                 '
+               'measure accuracy on held-out sentences\n'
+               '  python3 classifier.py authorlist1 -test test.txt  '
+               'guess the author of each sentence in test.txt',
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('authorlist',
+                        help='file listing one author text file per line '
+                             '(paths relative to the list\'s folder)')
+    parser.add_argument('-test', '--test', metavar='TEXTFILE', dest='test_fname',
+                        help='train on the full author files and guess the '
+                             'author of each sentence in TEXTFILE. Without '
+                             'it, every 10th sentence of each author is held '
+                             'out and the accuracy is printed.')
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return
+    args = parser.parse_args()
+
+    # Check the files before downloading anything, so mistakes fail fast
+    if not os.path.isfile(args.authorlist):
+        parser.error(f"author list '{args.authorlist}' not found")
+    if args.test_fname is not None and not os.path.isfile(args.test_fname):
+        parser.error(f"test file '{args.test_fname}' not found")
+    read_authorlist(args.authorlist)   # exits if an author file is missing
+
+    download_nltk_data()
+    if args.test_fname is None:
+        run_no_test_flag(args.authorlist)
+    else:
+        run_with_test_flag(args.authorlist, args.test_fname)
 
 
 if __name__ == "__main__":
-    #nltk.download('words')
     interface()
-
-

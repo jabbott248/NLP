@@ -93,14 +93,34 @@ Files in this folder
 
 Setup
 -----
-Follow the setup in the top-level README.md (install requirements.txt and
-download the NLTK data). This script only needs nltk and its 'punkt' /
-'punkt_tab' tokenizer data.
+Follow the setup in the top-level README.md (install requirements.txt).
+This script only needs nltk and its 'punkt' / 'punkt_tab' tokenizer data.
+If the tokenizer data is missing, the script downloads it (to ~/nltk_data)
+on its first run. If a download fails, it stops and says which package
+failed; on macOS that usually means the certificate step in the top-level
+README was skipped.
 
 How to run
 ----------
-Run from inside this folder. The file names in the author list are opened
-relative to the current directory.
+  Usage:
+
+      python3 classifier.py <authorlist>                   (measure accuracy)
+      python3 classifier.py <authorlist> -test <textfile>  (guess authors)
+      python3 classifier.py --help                         (show the help)
+
+  -test can also be written --test, and can go before or after the author
+  list. Running with no arguments prints the help. If an argument is
+  missing or a file can't be found, the script says what's wrong and shows
+  the usage.
+
+  The author list has one author text file per line. File names in it are
+  relative to the author list's own folder, so the script works from any
+  directory, e.g. from the top of the repo:
+
+      python3 Author_Language_Model/classifier.py Author_Language_Model/authorlist1
+
+  Each author is named after their file without the extension
+  (austen.txt -> austen). The list needs at least two authors.
 
   Default mode: split each author's text, train on one part and measure
   accuracy on the rest:
@@ -127,9 +147,8 @@ relative to the current directory.
 
       python3 classifier.py authorlist1 -test test.txt
 
-  The -test flag must come second, after the author list. Output is one
-  line per sentence: its number, the author file that scored best, and
-  the start of the sentence.
+  Output is one line per sentence: its number, the author whose model
+  scored best, and the start of the sentence.
 
   test.txt has one passage per author. Each passage was taken out of its
   author file, so none of it is in the training data:
@@ -141,15 +160,15 @@ relative to the current directory.
 
   Expected output (abridged):
 
-      Sentence 1:   austen.txt   "There is one thing, Emma, which a man can alwa...
-      Sentence 2:   austen.txt   It is Frank Churchill's duty to pay this attent...
+      Sentence 1:   austen    "There is one thing, Emma, which a man can alwa...
+      Sentence 2:   austen    It is Frank Churchill's duty to pay this attent...
       ...
-      Sentence 7:   tolstoy.txt  '-If he would say so to her at once, in the ton...
-      Sentence 8:   dickens.txt  I thought it affecting to see such a sturdy fel...
+      Sentence 7:   tolstoy   '-If he would say so to her at once, in the ton...
+      Sentence 8:   dickens   I thought it affecting to see such a sturdy fel...
       ...
-      Sentence 22:  dickens.txt  Yes.
+      Sentence 22:  dickens   Yes.
       ...
-      Sentence 33:  tolstoy.txt  For the first time in his life he knew the bitt...
+      Sentence 33:  tolstoy   For the first time in his life he knew the bitt...
 
   26 of the 33 sentences are right: Austen 6/7, Dickens 3/6, Wilde 11/13
   and Tolstoy 6/7. The misses include a one-word sentence ("Yes."), a
@@ -320,30 +339,37 @@ Evaluation and data
 
 Usability
 ---------
-12. Command-line handling (lines 318-331).
-    The -test flag has to be the second argument. There's no usage
-    message: running with no arguments only prints "Please supply an
-    authorlist", and wrong arguments print "Wrong number of arguments" or
-    "No -test flag" without saying what's expected.
+12. [FIXED] Command-line handling.
+    The -test flag had to be the second argument, and there was no usage
+    message: running with no arguments only printed "Please supply an
+    authorlist", and wrong arguments printed "Wrong number of arguments" or
+    "No -test flag". interface() now uses argparse: -test / --test can go
+    anywhere, -h / --help prints the help (as does running with no
+    arguments), and bad arguments or missing files print an error with the
+    usage. Files are checked before anything is downloaded or trained.
 
-13. Author names in the output.
-    -test mode prints the file name ("austen.txt") instead of the author.
-    (Default mode now uses name.removesuffix('.txt'), part of the #7 / #8
-    rewrite; it used re.sub('.txt', '', ...), where '.' matches any
-    character.)
+13. [FIXED] Author names in the output.
+    -test mode printed the file name ("austen.txt") instead of the author,
+    and default mode stripped names with re.sub('.txt', '', ...), where
+    '.' matches any character. Both modes now name each author after their
+    file without the folder or extension (author_name()), and -test mode
+    lines the names up in a column.
 
-14. File names in the author list are relative to the current directory,
-    not to the author list's folder, so the script only works when run from
-    this folder.
+14. [FIXED] File names in the author list were relative to the current
+    directory, so the script only worked when run from this folder. They
+    are now relative to the author list's own folder (absolute paths work
+    too). A missing author file, or a list with fewer than two authors,
+    gives a clear error.
 
-15. It doesn't check for or download the NLTK tokenizer data. On a fresh
-    machine nltk.word_tokenize() raises LookupError. (The top-level README
-    has the download command; the POS tagger downloads anything that's
-    missing automatically.)
+15. [FIXED] It didn't check for or download the NLTK tokenizer data, so on
+    a fresh machine nltk.word_tokenize() raised LookupError.
+    download_nltk_data() now checks for 'punkt' and 'punkt_tab' and
+    downloads whichever is missing, the same way the POS tagger does. If a
+    download fails, it exits with a message naming the package.
 
 Cleanup
 -------
-16. Unused and broken code (lines 163-184, 222-259).
+16. Unused and broken code (lines 183-204, 242-279).
     - test_prob_of_sentence(), test_good_turing() and test_lm() call
       LanguageModel() without the required author argument (TypeError), and
       use paths like '/txt_ascii/austen.txt', which point to the root of
