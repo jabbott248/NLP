@@ -22,8 +22,8 @@ and 1 of its 2,080 words is still changed, because neither list has it
 
 How it works
 ------------
-The steps below describe what the code does, and where it still does
-something different from what was meant (see "Known issues").
+The steps below describe what the code does; "Limitations" covers what
+it can't do.
 
 1. Load the word lists into a trie (load_dictionaries, trie_dict, insert)
    files/words has 235,886 words, one per line, and files/brown_words
@@ -158,9 +158,8 @@ Files in this folder
   make_brown_words.py    makes files/brown_words from the Brown corpus
                          (needs NLTK; only needed to remake the list)
   BSTNode.py             a binary search tree, kept as a simple example
-                         of a tree structure. An earlier version of the
-                         spell checker stored the dictionary in it;
-                         spellchecker.py doesn't use it.
+                         of a tree structure (spellchecker.py doesn't
+                         use it)
   files/                 the word lists and sample texts:
     words                    235,886 words, one per line, base forms
                              only. It is the same list as NLTK's
@@ -337,139 +336,3 @@ neither list (it appears only once in the Brown corpus), so it becomes
 /usr/share/dict/words (administerd, stucturelessness, transvaal), and
 some rare old entries that are usually mistakes ("dont"), so these
 aren't flagged.
-
-Known issues
-------------
-Found by running the script and each of its functions on the files in
-files/.
-
- 1. [FIXED] The dictionary was opened as '/files/words'. The leading
-    slash made it an absolute path, so the file was never found and the
-    script crashed before doing anything. test_trie() had the same path.
-    The dictionary is now files/words found relative to the script, or
-    any word list given with -d, and test_trie() uses the same default.
-
- 2. [FIXED] The output file was named by adding "corrected_" to the front
-    of the whole input path, so any input outside the current folder
-    failed: files/short1.txt -> corrected_files/short1.txt, a folder
-    that doesn't exist. An existing output file was overwritten without
-    a word, and a wrong number of arguments printed "Incorrect number of
-    arguments" and exited with status 0 (success). The script now uses
-    argparse (see "How to run"): corrected_ goes in front of the file
-    name only, -o picks another output file, replacing a file is
-    reported, the files are checked before any work is done, and
-    mistakes exit with a usage message and status 2.
-
- 3. [FIXED] suggest() didn't pick the closest candidate. It kept the
-    first 3 candidates it saw, whatever their distance, and after that a
-    new candidate replaced the third one only if it was exactly as close,
-    never if it was closer. "wioll" became "wice" (distance 5) though
-    "will" (distance 1) was a candidate, and suggest(['zzzzzz', 'yyyyyy',
-    'xxxxxx', 'cat'], 'cat') returned ['zzzzzz', 'yyyyyy', 'xxxxxx']. It
-    now keeps the 3 closest, closest first, and works out each distance
-    only once: "wioll" -> "will", and the example gives ['cat',
-    'zzzzzz', 'yyyyyy'].
-
- 4. [FIXED] get_all_children() stopped at the first complete word on
-    each branch and never looked below it, so none of the 41 longer
-    words starting with "will" were candidates. Only 37 of the 734 "wi"
-    words were found for "wioll", and from the root it found 52 words
-    out of 235,886. It now always keeps going down, and finds all 734
-    "wi" words and every word in the dictionary from the root.
-
- 5. [FIXED] get_similar_words() missed candidates:
-      - If every letter of the word followed a path in the trie but the
-        word wasn't in the dictionary, it returned no candidates, so
-        "Nor", "So", "It", "We" and "teh" got "No suggestions". It now
-        returns the words that continue it (Nor -> Nora).
-      - The part that matched was never a candidate itself: "abandonx"
-        couldn't become "abandon". Now it is (abandonx -> abandon).
-    It also said that a mistake early in a word can never be fixed. That
-    is how this way of finding candidates works rather than a bug in the
-    code, so it is described under "Limitations".
-
- 6. [FIXED] The check was case-sensitive, and the dictionary has most
-    words only in lower case, so any word at the start of a sentence was
-    flagged: "This", "It", "We", "In", 88 of the 252 tokens flagged in
-    text_1.txt. The replacement was then found among words starting with
-    the capital letter, mostly names: This -> Thiospira, It -> Ita.
-    A word with capitals is now also checked in lower case, and its
-    candidates include the lower-case ones, given the word's capitals
-    (see "How it works", steps 3 and 4): "Wioll" -> "Will".
-
- 7. [FIXED] The dictionary has no inflected forms: no plurals, -ed, -ing
-    or -s verb forms. "has", "friends", "helped", "needed" and "years"
-    aren't in it, and about 150 of the 252 tokens flagged in text_1.txt
-    were inflections of dictionary words, "corrected" to other words with
-    the same start (helped -> helper, has -> hash). files/words is kept
-    as it is, and words are now also accepted if taking a common ending
-    off them leaves a dictionary word, with a list of irregular forms
-    (see "How it works", step 3). Together with issue 6 this took
-    text_1.txt from 252 flagged tokens to 8. The rules have limits of
-    their own (see "Limitations"), and some words were missing from
-    files/words altogether (issue 15).
-
- 8. [FIXED] The tokenizer split off every full stop ("Mr." -> Mr .,
-    "3.5" -> 3 . 5, "U.S.A." -> six tokens), didn't split off colons or
-    the em dash ("order:" -> order, "itself—nameless" -> itself, losing
-    "nameless"), left quote marks attached to words ('going -> '), and
-    let numbers through to the spell check ("48" -> "A"). The code meant
-    to handle apostrophes was commented out. Words are now found with
-    one regular expression (see "How it works", step 2): apostrophes
-    count only inside a word, everything else separates words, words
-    with digits are skipped, and possessives and contractions (people's,
-    don't, they're) are recognised by the ending rules. This took
-    text_1.txt from 8 changed words to 2.
-
- 9. [FIXED] The output lost the text's layout. Every token was written
-    followed by a space, so the whole file came out on one line, with
-    spaces before punctuation ("foreboding ." and "yesterday ,") and no
-    paragraph breaks, and the script printed only the misspelled word,
-    not the line it was in as a comment said it should. Misspelled words
-    are now replaced where they are in each line, so the output keeps
-    the input's layout (for text_1.txt and short1.txt, only the changed
-    words differ), and each change is printed with its line number and
-    the part of the line around it.
-
-10. [FIXED] Punctuation was handled by adding 25 marks to the dictionary
-    as words (add_punction_to_trie), a list that had a backslash and the
-    em dash but no colon. Punctuation never reaches the spell check now
-    (issue 8), so the function was removed.
-
-11. [FIXED] edit_dist() crashed if either word was empty: its result was
-    read from the loop variables (dist[row][col]), which are never set
-    when a loop doesn't run, giving "UnboundLocalError: cannot access
-    local variable 'row'". It now returns the bottom-right cell,
-    dist[-1][-1]: the distance from "" to "abc" is 3, and from "" to ""
-    is 0.
-
-12. [FIXED] "from typing import List, Tuple" imported List, which wasn't
-    used; it now imports only Tuple. The trie's per-node counter, which
-    nothing used, was kept: it is correct (it counts the dictionary words
-    that start with a prefix, see "How it works", step 1) and is part of
-    showing how a trie works.
-
-13. [FIXED] There were no tests. test_trie(), test_find_similar_words()
-    and test_tokenize() printed things for checking by eye, were never
-    called, and two of them crashed because their files were opened
-    relative to the current folder. They are replaced by
-    test_spellchecker.py, 48 unit tests (see "Running the tests").
-
-14. [FIXED] The saved outputs in files/ were from older versions of the
-    script: corrected_apostraphe_test.txt had one token per line,
-    corrected_short1.txt had "wice" and everything on one line, and
-    corrected_text_1.txt had 157 wrong changes. They have been made again
-    with the script as it is now, and a test checks that they stay the
-    same as its output. The misspelling "apostraphe" in two file names is
-    fixed: they are now apostrophe_test.txt and
-    corrected_apostrophe_test.txt.
-
-15. [FIXED] files/words (NLTK's "words" corpus, a 1934 word list) was
-    missing some common words: near, box, kid, proud, hang and fond were
-    the most frequent lower-case words in the Brown corpus that it
-    rejected, and in text_1.txt "preeminently" and "falsity" were changed
-    to "preen" and "falsify". files/words is kept as it is, and
-    files/brown_words adds the 2,645 Brown words it doesn't cover (see
-    "Files in this folder"), which also brings in names like Chicago and
-    Abbott. text_1.txt now has 1 change. What is still missing is under
-    "Limitations".
