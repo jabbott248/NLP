@@ -6,7 +6,7 @@
 #
 # The unit tests mostly use a tiny made-up dictionary (TOY_WORDS) so the
 # expected answers can be worked out by hand. The tests further down load
-# the real word lists in files/ (about half a second) and run the script
+# the real word lists in dictionary/ (about half a second) and run the script
 # from the command line. Every file the tests write goes in a temporary
 # folder.
 
@@ -14,6 +14,7 @@ import collections
 import contextlib
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,7 +24,8 @@ import spellchecker as sc
 import make_brown_words
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FILES = os.path.join(HERE, 'files')
+SAMPLES = sc.SAMPLES_DIR
+CORRECTED = sc.CORRECTED_DIR
 
 TOY_WORDS = ['a', 'an', 'and', 'abandon', 'abandoned', 'help', 'will',
              'willing', 'willow', 'wild', 'wile', 'city', 'tax', 'wish',
@@ -264,7 +266,7 @@ class TestFindingWords(TempDirTestCase):
 
     def test_tokenize_file(self):
         self.assertEqual(
-            sc.tokenize(os.path.join(FILES, 'test_tokenize.txt')),
+            sc.tokenize(os.path.join(SAMPLES, 'test_tokenize.txt')),
             ['My', 'name', 'is', 'jake', 'I', 'like', 'to', 'eat', 'good',
              'food'])
 
@@ -279,6 +281,17 @@ class TestFindingWords(TempDirTestCase):
         self.assertTrue(shown.startswith('...') and shown.endswith('...'))
         self.assertIn('tyop', shown)
         self.assertLessEqual(len(shown), 2 * sc.CONTEXT + 4 + 6)
+
+
+class TestOutputName(unittest.TestCase):
+    def test_default_output_name(self):
+        for input_fname in [os.path.join('samples', 'short1.txt'),
+                            os.path.join(os.sep, 'tmp', 'short1.txt'),
+                            'short1.txt']:
+            output = sc.default_output_name(input_fname)
+            self.assertEqual(os.path.abspath(output),
+                             os.path.join(sc.CORRECTED_DIR,
+                                          'corrected_short1.txt'))
 
 
 class TestMakeBrownWords(unittest.TestCase):
@@ -340,7 +353,7 @@ class TestCommandLine(TempDirTestCase):
 
     def test_short1(self):
         out = self.path('out.txt')
-        result = self.run_script(os.path.join('files', 'short1.txt'),
+        result = self.run_script(os.path.join('samples', 'short1.txt'),
                                  '-o', out)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Line 1: changing wioll to will', result.stdout)
@@ -348,7 +361,7 @@ class TestCommandLine(TempDirTestCase):
                       result.stdout)
         self.assertIn('Line 4: changing welfure to welfare', result.stdout)
         self.assertIn('Changed 3 words.', result.stdout)
-        with open(os.path.join(FILES, 'short1.txt')) as f:
+        with open(os.path.join(SAMPLES, 'short1.txt')) as f:
             expected = (f.read().replace('wioll', 'will')
                         .replace('yesterdy', 'yesterday')
                         .replace('welfure', 'welfare'))
@@ -357,11 +370,11 @@ class TestCommandLine(TempDirTestCase):
 
     def test_text_1_keeps_layout(self):
         out = self.path('out.txt')
-        result = self.run_script(os.path.join(FILES, 'text_1.txt'),
+        result = self.run_script(os.path.join(SAMPLES, 'text_1.txt'),
                                  '-o', out)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Changed 1 word.', result.stdout)
-        with open(os.path.join(FILES, 'text_1.txt')) as f:
+        with open(os.path.join(SAMPLES, 'text_1.txt')) as f:
             expected = f.read().replace('preeminently', 'preen')
         with open(out) as f:
             self.assertEqual(f.read(), expected)
@@ -369,25 +382,42 @@ class TestCommandLine(TempDirTestCase):
     def test_saved_outputs_are_up_to_date(self):
         for name in ['short1.txt', 'text_1.txt', 'apostrophe_test.txt']:
             out = self.path(name)
-            result = self.run_script(os.path.join(FILES, name), '-o', out)
+            result = self.run_script(os.path.join(SAMPLES, name), '-o', out)
             self.assertEqual(result.returncode, 0, result.stderr)
-            with open(out) as made, \
-                    open(os.path.join(FILES, 'corrected_' + name)) as saved:
+            saved_fname = os.path.join(CORRECTED, 'corrected_' + name)
+            with open(out) as made, open(saved_fname) as saved:
                 self.assertEqual(made.read(), saved.read(), name)
 
     def test_abbreviations_and_quotes(self):
         text = self.write('in.txt', 'Dr. Smith’s visit, etc.\nDr Smith\n')
-        result = self.run_script(text)
+        result = self.run_script(text, '-o', self.path('out.txt'))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('Line 1', result.stdout)
         self.assertIn('Line 2: changing Dr to', result.stdout)
 
     def test_default_output_and_replacing(self):
+        # The default output goes in corrected/ next to the script, so run a
+        # copy of the script in the temporary folder (with a link to the real
+        # dictionary/) to keep the real corrected/ folder untouched
+        app = self.path('app')
+        os.mkdir(app)
+        shutil.copy(os.path.join(HERE, 'spellchecker.py'), app)
+        os.symlink(sc.DICTIONARY_DIR, os.path.join(app, 'dictionary'))
         text = self.write('notes.txt', 'teh cat\n')
-        first = self.run_script(text, cwd=self.tmp)
+        script = os.path.join(app, 'spellchecker.py')
+
+        def run():
+            return subprocess.run([sys.executable, script, text],
+                                  capture_output=True, text=True,
+                                  cwd=self.tmp)
+        first = run()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        output = os.path.join(app, 'corrected', 'corrected_notes.txt')
         self.assertIn('Saved the corrected text to', first.stdout)
-        self.assertTrue(os.path.isfile(self.path('corrected_notes.txt')))
-        second = self.run_script(text, cwd=self.tmp)
+        self.assertIn(os.path.join('app', 'corrected', 'corrected_notes.txt'),
+                      first.stdout)
+        self.assertTrue(os.path.isfile(output))   # corrected/ was created
+        second = run()
         self.assertIn('Replaced', second.stdout)
 
     def test_own_word_list(self):

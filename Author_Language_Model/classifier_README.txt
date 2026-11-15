@@ -143,7 +143,7 @@ Files in this folder
                          passages, so don't train on them and test with
                          test.txt.
   words                  English word list (not used; a copy of
-                         SpellChecker/files/words)
+                         SpellChecker/dictionary/words)
   test_bigram_classifier.py, test_ngram_classifier.py
                          unit and end-to-end tests (see "Running the tests")
   test.py                scratch file for trying things out (not used)

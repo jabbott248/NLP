@@ -1,17 +1,18 @@
-# Make files/brown_words: the words in the Brown corpus that files/words
-# doesn't already cover, so the spell checker can use them as a second word
-# list without needing NLTK itself.
+# Make dictionary/brown_words: the words in the Brown corpus that
+# dictionary/words doesn't already cover, so the spell checker can use them
+# as a second word list without needing NLTK itself.
 #
 # The Brown corpus is about a million words of American English from 1961
-# (news, fiction, science, ...), and comes with NLTK. Unlike files/words it
-# has inflected forms, names and modern words (near, box, kid, Chicago).
+# (news, fiction, science, ...), and comes with NLTK. Unlike
+# dictionary/words it has inflected forms, names and modern words (near,
+# box, kid, Chicago).
 #
 # A word is kept if:
 #   - it is a word as spellchecker.py finds them (letters, with apostrophes
 #     only inside), with no digits,
 #   - it appears at least MIN_COUNT times, which leaves out most one-off
 #     typos in the corpus ("runing" and "publically" each appear once),
-#   - and files/words with the ending and case rules doesn't accept it
+#   - and dictionary/words with the ending and case rules doesn't accept it
 #     already, so the list only has what is new.
 # A possessive or contraction ("Atlanta's") is also left out when the word
 # it is made from ("Atlanta") is kept, since the rules handle the ending.
@@ -27,8 +28,7 @@ import sys
 import spellchecker as sc
 
 MIN_COUNT = 2
-HERE = os.path.dirname(os.path.abspath(__file__))
-OUTPUT = os.path.join(HERE, 'files', 'brown_words')
+OUTPUT = sc.BROWN_DICT
 
 
 def brown_word_counts():

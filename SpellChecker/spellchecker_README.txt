@@ -5,20 +5,20 @@ What it does
 ------------
 spellchecker.py reads a text file, finds the words that aren't in its
 dictionary, replaces each one with the closest dictionary word, and
-saves the corrected text to a new file whose name starts with
-"corrected_". Everything else in the text (line breaks, spacing,
+saves the corrected text in the corrected/ folder, with "corrected_"
+in front of its name. Everything else in the text (line breaks, spacing,
 punctuation) is kept exactly as it was. Each change is printed with its
 line number and the part of the line it is in.
 
-It checks against two word lists: files/words, a 1934 dictionary word
-list, and files/brown_words, words from the Brown corpus that the first
-list doesn't cover (names, modern words, and some common words it is
-missing). Words with capital letters, common endings and contractions
-("This", "helped", "cities", "people's", "don't") are recognised, even
-though the dictionary only lists base forms. It fixes all 3
-misspellings in files/short1.txt. files/text_1.txt has no misspellings,
-and 1 of its 2,080 words is still changed, because neither list has it
-(see "Limitations").
+It checks against two word lists: dictionary/words, a 1934 dictionary
+word list, and dictionary/brown_words, words from the Brown corpus that
+the first list doesn't cover (names, modern words, and some common words
+it is missing). Words with capital letters, common endings and
+contractions ("This", "helped", "cities", "people's", "don't") are
+recognised, even though the dictionary only lists base forms. It fixes
+all 3 misspellings in samples/short1.txt. samples/text_1.txt has no
+misspellings, and 1 of its 2,080 words is still changed, because neither
+list has it (see "Limitations").
 
 How it works
 ------------
@@ -26,7 +26,7 @@ The steps below describe what the code does; "Limitations" covers what
 it can't do.
 
 1. Load the word lists into a trie (load_dictionaries, trie_dict, insert)
-   files/words has 235,886 words, one per line, and files/brown_words
+   dictionary/words has 235,886 words, one per line, and dictionary/brown_words
    has 2,645 more (see "Files in this folder"). Each is added to a trie:
    a tree with one node per letter, where the path from the root spells
    a word and the last letter's node is marked word_finished. Words that
@@ -68,7 +68,7 @@ it can't do.
        fine. A lower-case word isn't accepted because of a capitalised
        entry: "america" is flagged even though "America" is a word.
      - or any of its base forms (base_forms()): what the word would be
-       with one common ending taken off. files/words lists only the base
+       with one common ending taken off. dictionary/words lists only the base
        form of most words ("help", not "helps", "helped", "helping"),
        so the endings are handled by rules:
            's           possessive        people's
@@ -95,12 +95,12 @@ it can't do.
        Common irregular forms the dictionary doesn't have are listed in
        IRREGULAR_FORMS: has, began, held, heard, paid, children, feet,
        can't, won't, o'clock, ... (most irregular forms, like "went",
-       "said" and "men", are in files/words already).
+       "said" and "men", are in dictionary/words already).
 
-   With files/words alone, 0.39% of the lower-case words in the Brown
+   With dictionary/words alone, 0.39% of the lower-case words in the Brown
    corpus (about a million words of 1960s American English, from NLTK)
    are flagged, mostly words the list doesn't have, such as near, box,
-   kid and proud. files/brown_words adds those.
+   kid and proud. dictionary/brown_words adds those.
 
 4. Find candidate replacements (correct, get_similar_words,
    get_all_children)
@@ -155,12 +155,12 @@ Files in this folder
 --------------------
   spellchecker.py        the script
   test_spellchecker.py   tests (see "Running the tests")
-  make_brown_words.py    makes files/brown_words from the Brown corpus
+  make_brown_words.py    makes dictionary/brown_words from the Brown corpus
                          (needs NLTK; only needed to remake the list)
   BSTNode.py             a binary search tree, kept as a simple example
                          of a tree structure (spellchecker.py doesn't
                          use it)
-  files/                 the word lists and sample texts:
+  dictionary/            the word lists:
     words                    235,886 words, one per line, base forms
                              only. It is the same list as NLTK's
                              "words" corpus: the Unix word list from
@@ -180,6 +180,7 @@ Files in this folder
                              when "Atlanta" is kept.
     short_words              the first 100 words of words, for quick
                              tests
+  samples/               sample texts to check:
     short1.txt               5 lines from Frankenstein with 3
                              misspellings: wioll, yesterdy, welfure
     text_1.txt               the opening of Franklin D. Roosevelt's
@@ -189,20 +190,23 @@ Files in this folder
                              quotes
     test_tokenize.txt        one line with commas and full stops, for
                              trying the tokenizer
-    corrected_short1.txt     the script's output for short1.txt,
-    corrected_text_1.txt     text_1.txt and apostrophe_test.txt, as
-    corrected_apostrophe_    examples (the tests check that they match
-      test.txt               what the script gives)
+  corrected/             where corrected texts are saved by default.
+                         It holds the script's output for three of the
+                         samples, as examples (the tests check that
+                         they match what the script gives):
+    corrected_short1.txt
+    corrected_text_1.txt
+    corrected_apostrophe_test.txt
 
 Setup
 -----
 Nothing to install: the script only uses the Python standard library
 (Python 3.9 or newer, for the list[str] type hints). NLTK is only needed
-to remake files/brown_words with make_brown_words.py (see the top-level
+to remake dictionary/brown_words with make_brown_words.py (see the top-level
 README.md for installing NLTK and its 'brown' data):
 
       python3 make_brown_words.py
-      Saved 2645 words to files/brown_words.
+      Saved 2645 words to dictionary/brown_words.
 
 How to run
 ----------
@@ -210,21 +214,21 @@ How to run
 
   TEXTFILE       the text file to check.
   -o OUTFILE     where to save the corrected text. If left out, it's the
-                 input file's name with corrected_ in front, in the same
-                 folder as the input (files/short1.txt ->
-                 files/corrected_short1.txt). An existing file is
-                 replaced, and the script says so.
+                 input file's name with corrected_ in front, in the
+                 corrected/ folder next to the script, wherever the input
+                 is (samples/short1.txt -> corrected/corrected_short1.txt).
+                 An existing file is replaced, and the script says so.
   -d WORDLIST    a word list to check against, one word per line. Give
                  -d more than once to use several lists. If left out,
-                 files/words and files/brown_words in the script's
-                 folder are used, so the script can be run from any
+                 dictionary/words and dictionary/brown_words next to the
+                 script are used, so the script can be run from any
                  folder.
   -h             show the help message (also shown when the script is
                  run with no arguments).
 
 For short1.txt it takes about half a second:
 
-      $ python3 spellchecker.py files/short1.txt
+      $ python3 spellchecker.py samples/short1.txt
       Line 1: changing wioll to will
           you wioll rejoice to hear that no...
       Line 3: changing yesterdy to yesterday
@@ -232,10 +236,10 @@ For short1.txt it takes about half a second:
       Line 4: changing welfure to welfare
           my dear sister of my welfure and increasing confidenc...
       Changed 3 words.
-      Replaced files/corrected_short1.txt with the corrected text.
+      Replaced corrected/corrected_short1.txt with the corrected text.
 
 (the last line says "Saved the corrected text to ..." when the output
-file doesn't exist yet). files/corrected_short1.txt then has the same
+file doesn't exist yet). corrected/corrected_short1.txt then has the same
 lines as short1.txt with the three words fixed:
 
       you will rejoice to hear that no disaster have accompany the
@@ -250,11 +254,11 @@ spelling mistakes, so a spell checker shouldn't change them.)
 text_1.txt has no misspellings. 1 of its 2,080 words is changed,
 because neither word list has it (see "Limitations"):
 
-      $ python3 spellchecker.py files/text_1.txt
+      $ python3 spellchecker.py samples/text_1.txt
       Line 3: changing preeminently to preen
           ...r people impels. This is preeminently the time to speak the tr...
       Changed 1 word.
-      Replaced files/corrected_text_1.txt with the corrected text.
+      Replaced corrected/corrected_text_1.txt with the corrected text.
 
 Running the tests
 -----------------
@@ -284,7 +288,7 @@ From inside this folder:
   not being a candidate, a case-sensitive check, no ending rules, no
   doubling check, no contractions, splitting words on spaces only,
   writing the output on one line, edit_dist() reading the wrong cell,
-  and leaving out files/brown_words. Each one made at least one test
+  and leaving out dictionary/brown_words. Each one made at least one test
   fail.
 
 A missing input file or dictionary, an output folder that doesn't
@@ -332,7 +336,7 @@ the stem is a word, not that the word takes that ending:
 
 The word lists still have gaps and mistakes. "preeminently" is in
 neither list (it appears only once in the Brown corpus), so it becomes
-"preen". files/words has 3 misspelled entries compared with macOS's
+"preen". dictionary/words has 3 misspelled entries compared with macOS's
 /usr/share/dict/words (administerd, stucturelessness, transvaal), and
 some rare old entries that are usually mistakes ("dont"), so these
 aren't flagged.

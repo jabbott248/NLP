@@ -63,7 +63,7 @@ def word_exists(root, word: str) -> bool:
 
 
 ## WORD ENDINGS
-# files/words has only the base form of most words ("help", not "helps",
+# dictionary/words has only the base form of most words ("help", not "helps",
 # "helped", "helping"), so a word is also accepted if taking a common
 # ending off it leaves a dictionary word. Each rule is (ending, what to put
 # back): "cities" -> "citi" + "y" = "city". DOUBLE marks endings that may
@@ -87,7 +87,7 @@ ENDING_RULES = [
 ]
 
 # Common irregular forms that don't follow the rules and aren't in
-# files/words themselves (most are: "went", "said", "men" and "mice" are)
+# dictionary/words themselves (most are: "went", "said", "men" and "mice" are)
 IRREGULAR_FORMS = {
     'has': 'have', 'became': 'become', 'began': 'begin', 'bled': 'bleed',
     'blew': 'blow', 'forgave': 'forgive', 'forgiven': 'forgive',
@@ -327,7 +327,7 @@ WORD_PATTERN = re.compile(LETTER + r"+(?:['’]" + LETTER + r"+)*")
 def is_checkable(word: str) -> bool:
     return not any(ch.isdigit() for ch in word)
 
-# Abbreviations that aren't in files/words, accepted when a full stop
+# Abbreviations that aren't in dictionary/words, accepted when a full stop
 # follows them ("Dr." is fine, "Dr" on its own is checked as a word)
 ABBREVIATIONS = {
     'Dr', 'St', 'Jr', 'Sr', 'Mt', 'Ave', 'Blvd', 'Prof', 'Gov', 'Sen',
@@ -386,29 +386,36 @@ def edit_dist(s,t):
     return dist[-1][-1]
 
 # INTERFACE
-# Folder this script is in, so the default dictionary is found no matter
-# which folder the script is run from
+# Folders next to this script, so the defaults are found no matter which
+# folder the script is run from:
+#   dictionary/   the word lists
+#   samples/      sample texts to check
+#   corrected/    where corrected texts are saved by default
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DICT = os.path.join(SCRIPT_DIR, 'files', 'words')
-# Words from the Brown corpus that files/words doesn't cover (names, modern
-# words like "okay", and common words it is missing like "near"), made by
-# make_brown_words.py
-BROWN_DICT = os.path.join(SCRIPT_DIR, 'files', 'brown_words')
+DICTIONARY_DIR = os.path.join(SCRIPT_DIR, 'dictionary')
+SAMPLES_DIR = os.path.join(SCRIPT_DIR, 'samples')
+CORRECTED_DIR = os.path.join(SCRIPT_DIR, 'corrected')
+DEFAULT_DICT = os.path.join(DICTIONARY_DIR, 'words')
+# Words from the Brown corpus that dictionary/words doesn't cover (names,
+# modern words like "okay", and common words it is missing like "near"),
+# made by make_brown_words.py
+BROWN_DICT = os.path.join(DICTIONARY_DIR, 'brown_words')
 DEFAULT_DICTS = [DEFAULT_DICT, BROWN_DICT]
 OUTPUT_PREFIX = 'corrected_'
 
 def default_output_name(input_fname):
-    # files/short1.txt -> files/corrected_short1.txt (saved next to the input)
-    folder, name = os.path.split(input_fname)
-    return os.path.join(folder, OUTPUT_PREFIX + name)
+    # samples/short1.txt -> corrected/corrected_short1.txt, in the corrected
+    # folder next to this script, wherever the input is
+    name = os.path.basename(input_fname)
+    return short_path(os.path.join(CORRECTED_DIR, OUTPUT_PREFIX + name))
 
 def short_path(fname):
-    # Show a path relative to the current folder if it's inside it, and the
-    # full path otherwise
-    cwd = os.getcwd()
+    # Show a path relative to the current folder if it's inside it or one
+    # folder up (samples/ -> ../corrected/...), and the full path otherwise
     full = os.path.abspath(fname)
-    if os.path.commonpath([cwd, full]) == cwd:
-        return os.path.relpath(full)
+    rel = os.path.relpath(full)
+    if not rel.startswith(os.path.join(os.pardir, os.pardir)):
+        return rel
     return full
 
 def read_text_file(read, fname):
@@ -488,11 +495,11 @@ def interface():
                     'one with\nthe closest dictionary word, and save the '
                     'corrected text to a new file.',
         epilog='examples:\n'
-               '  python3 spellchecker.py files/short1.txt             '
-               '-> files/corrected_short1.txt\n'
-               '  python3 spellchecker.py files/short1.txt -o out.txt  '
+               '  python3 spellchecker.py samples/short1.txt             '
+               '-> corrected/corrected_short1.txt\n'
+               '  python3 spellchecker.py samples/short1.txt -o out.txt  '
                '-> out.txt\n'
-               '  python3 spellchecker.py files/short1.txt -d mywords  '
+               '  python3 spellchecker.py samples/short1.txt -d mywords  '
                'check against the words in mywords only',
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('input', metavar='TEXTFILE',
@@ -500,14 +507,14 @@ def interface():
     parser.add_argument('-o', '--output', metavar='OUTFILE',
                         help='where to save the corrected text (default: '
                              'the input file\'s name with %s in front, in '
-                             'the same folder as the input). An existing '
-                             'file is replaced.' % OUTPUT_PREFIX)
+                             'the corrected folder next to this script). An '
+                             'existing file is replaced.' % OUTPUT_PREFIX)
     parser.add_argument('-d', '--dict', metavar='WORDLIST', dest='dict_fnames',
                         action='append',
                         help='word list to check against, one word per line. '
                              'Give -d more than once to use several lists '
-                             '(default: files/words and files/brown_words '
-                             'in this script\'s folder)')
+                             '(default: dictionary/words and '
+                             'dictionary/brown_words next to this script)')
     if len(sys.argv) == 1:
         parser.print_help()
         return
@@ -517,6 +524,7 @@ def interface():
     output_fname = args.output
     if output_fname is None:
         output_fname = default_output_name(input_fname)
+        os.makedirs(CORRECTED_DIR, exist_ok=True)   # in case it was deleted
     dict_fnames = args.dict_fnames
     if dict_fnames is None:
         dict_fnames = [short_path(f) for f in DEFAULT_DICTS]
