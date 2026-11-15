@@ -207,56 +207,124 @@ class TestTransform(unittest.TestCase):
         np.testing.assert_allclose(S.transform(windows), expected)
 
 
-class TestCreateSpectrogram(TempDirTestCase):
-    def draw(self, data):
-        return np.array(S.create_spectrogram(data, self.path('out.png')))
+class TestShadeLevels(unittest.TestCase):
+    def test_loudest_is_0_db(self):
+        levels = S.shade_levels(np.array([[100.0, 60.0, 30.0]]))
+        np.testing.assert_allclose(levels, [[0.0, -40.0, -70.0]])
 
-    def test_saves_image_of_right_size(self):
-        img = S.create_spectrogram(np.zeros((5, 201)), self.path('out.png'))
-        self.assertEqual(img.size, (5, 201))   # width = windows
-        with Image.open(self.path('out.png')) as saved:
-            self.assertEqual(saved.size, (5, 201))
-            self.assertEqual(saved.mode, 'L')
+    def test_quieter_than_80_db_is_capped(self):
+        levels = S.shade_levels(np.array([[100.0, 10.0, -200.0]]))
+        np.testing.assert_allclose(levels, [[0.0, -80.0, -80.0]])
 
-    def test_low_frequencies_at_the_bottom(self):
-        data = np.zeros((3, 10))
-        data[:, 0] = 50        # bin 0 loud in every window
-        pixels = self.draw(data)
-        self.assertTrue(np.all(pixels[-1] == 0))      # bottom row black
-        self.assertTrue(np.all(pixels[:-1] == 255))   # everything else white
-
-    def test_time_runs_left_to_right(self):
-        data = np.zeros((4, 10))
-        data[0, :] = 50        # first window loud
-        pixels = self.draw(data)
-        self.assertTrue(np.all(pixels[:, 0] == 0))
-        self.assertTrue(np.all(pixels[:, 1:] == 255))
-
-    def test_shades_cover_the_top_80_db(self):
-        # loudest 100 dB -> black, 60 dB -> half grey, 20 dB -> white
-        pixels = self.draw(np.array([[100.0, 60.0, 20.0]]))
-        self.assertEqual(list(pixels[:, 0]), [255, 128, 0])  # rows flipped
-
-    def test_quieter_than_80_db_is_white(self):
-        pixels = self.draw(np.array([[100.0, 10.0, -200.0]]))
-        self.assertEqual(list(pixels[:, 0]), [255, 255, 0])
-
-    def test_small_range_uses_full_scale(self):
-        # Values only 10 dB apart still go from white to black
-        pixels = self.draw(np.array([[30.0, 25.0, 20.0]]))
-        self.assertEqual(list(pixels[:, 0]), [255, 128, 0])
+    def test_shape_unchanged(self):
+        self.assertEqual(S.shade_levels(np.zeros((4, 201)) + np.arange(201))
+                         .shape, (4, 201))
 
     def test_all_the_same_is_white(self):
-        self.assertTrue(np.all(self.draw(np.full((3, 5), -200.0)) == 255))
+        np.testing.assert_allclose(S.shade_levels(np.full((3, 5), -200.0)),
+                                   -80.0)
 
-    def test_silence_does_not_change_other_shades(self):
+    def test_silence_does_not_change_other_levels(self):
         rng = np.random.default_rng(1)
         speech = rng.uniform(20, 110, size=(10, 201))
         with_silence = np.vstack([np.full((5, 201), -200.0), speech])
-        a = self.draw(speech)
-        b = self.draw(with_silence)
-        np.testing.assert_array_equal(b[:, 5:], a)
-        self.assertTrue(np.all(b[:, :5] == 255))
+        a = S.shade_levels(speech)
+        b = S.shade_levels(with_silence)
+        np.testing.assert_allclose(b[5:], a)
+        np.testing.assert_allclose(b[:5], -80.0)
+
+
+class TestCreateSpectrogram(TempDirTestCase):
+    def draw(self, data, sample_rate=16000, name='out.png', title=None):
+        fig = S.create_spectrogram(data, sample_rate, self.path(name),
+                                   title=title)
+        main_ax, bar_ax = fig.axes
+        return fig, main_ax, bar_ax
+
+    def test_saves_a_png(self):
+        self.draw(np.zeros((5, 201)))
+        with Image.open(self.path('out.png')) as saved:
+            self.assertEqual(saved.format, 'PNG')
+            self.assertEqual(saved.size, (1500, 675))   # 10 x 4.5 in, 150 dpi
+
+    def test_other_formats(self):
+        for name in ['out.pdf', 'out.svg', 'out.jpg']:
+            self.draw(np.zeros((5, 201)), name=name)
+            self.assertGreater(os.path.getsize(self.path(name)), 0, name)
+
+    def test_axes_labels_and_title(self):
+        _, ax, bar = self.draw(np.zeros((5, 201)), title='sa1.wav')
+        self.assertEqual(ax.get_xlabel(), 'Time (s)')
+        self.assertEqual(ax.get_ylabel(), 'Frequency (Hz)')
+        self.assertEqual(ax.get_title(), 'sa1.wav')
+        self.assertEqual(bar.get_ylabel(), 'Level (dB below the loudest point)')
+
+    def test_axes_ranges(self):
+        # 340 windows: the last one starts at 3.39 s and ends at 3.415 s
+        _, ax, _ = self.draw(np.zeros((340, 201)))
+        self.assertAlmostEqual(ax.get_xlim()[0], 0)
+        self.assertAlmostEqual(ax.get_xlim()[1], 3.415)
+        self.assertEqual(ax.get_ylim(), (0, 8000))
+
+    def test_frequency_axis_follows_sample_rate(self):
+        # 8,000 Hz: 200-sample windows -> 101 bins, 0 to 4,000 Hz
+        _, ax, _ = self.draw(np.zeros((5, 101)), sample_rate=8000)
+        self.assertEqual(ax.get_ylim(), (0, 4000))
+
+    def test_cells_line_up_with_windows_and_bins(self):
+        _, ax, _ = self.draw(np.zeros((340, 201)))
+        left, right, bottom, top = ax.images[0].get_extent()
+        # Window 0 is centred at 12.5 ms and each column is 10 ms wide
+        self.assertAlmostEqual((left + 0.005), 0.0125)
+        self.assertAlmostEqual(right - left, 3.40)
+        # Bin 0 is centred at 0 Hz and each row is 40 Hz tall
+        self.assertAlmostEqual(bottom, -20)
+        self.assertAlmostEqual(top, 8020)
+
+    def test_low_frequencies_at_the_bottom(self):
+        data = np.full((3, 10), -200.0)
+        data[:, 0] = 50        # bin 0 loud in every window, silence elsewhere
+        _, ax, _ = self.draw(data)
+        image = ax.images[0]
+        self.assertEqual(image.origin, 'lower')   # array row 0 at the bottom
+        shown = image.get_array()
+        self.assertEqual(shown.shape, (10, 3))    # rows = bins, cols = time
+        np.testing.assert_allclose(shown[0], 0.0)      # bin 0: loudest
+        np.testing.assert_allclose(shown[1:], -80.0)
+
+    def test_time_runs_left_to_right(self):
+        data = np.full((4, 10), -200.0)
+        data[0, :] = 50        # first window loud, silence elsewhere
+        _, ax, _ = self.draw(data)
+        shown = ax.images[0].get_array()
+        np.testing.assert_allclose(shown[:, 0], 0.0)
+        np.testing.assert_allclose(shown[:, 1:], -80.0)
+
+    def test_white_is_quiet_and_black_is_loud(self):
+        _, ax, bar = self.draw(np.zeros((5, 201)))
+        image = ax.images[0]
+        self.assertEqual(image.get_clim(), (-80, 0))
+        white = image.cmap(image.norm(-80))
+        black = image.cmap(image.norm(0))
+        np.testing.assert_allclose(white[:3], [1, 1, 1])
+        np.testing.assert_allclose(black[:3], [0, 0, 0])
+        self.assertEqual(bar.get_ylim(), (-80, 0))
+
+    def test_picture_has_dark_band_at_the_bottom(self):
+        # Look at the saved pixels: a loud 0-400 Hz band and silence above
+        data = np.full((50, 201), -200.0)
+        data[:, :10] = 50
+        _, ax, _ = self.draw(data)
+        with Image.open(self.path('out.png')) as saved:
+            pixels = np.array(saved.convert('L'))
+        # Middle column of the plot area, near the bottom and near the top
+        x0, y0, x1, y1 = ax.get_window_extent().extents
+        height = pixels.shape[0]
+        col = int((x0 + x1) / 2)
+        near_bottom = pixels[height - int(y0) - 5, col]
+        near_top = pixels[height - int(y1) + 5, col]
+        self.assertLess(near_bottom, 50)       # dark
+        self.assertGreater(near_top, 200)      # white
 
 
 class TestDebugHelpers(unittest.TestCase):
@@ -326,8 +394,10 @@ class TestCommandLine(TempDirTestCase):
             result = self.run_script(os.path.join('dr1', name), '-o', out)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('Read %i samples' % n_samples, result.stdout)
+            self.assertIn('(%i windows x 201 bins)' % n_windows,
+                          result.stdout)
             with Image.open(out) as img:
-                self.assertEqual(img.size, (n_windows, 201))
+                self.assertEqual(img.format, 'PNG')
 
     def test_default_input_from_another_folder(self):
         # Run from the temp folder: the default dr1/sa1.wav is still found

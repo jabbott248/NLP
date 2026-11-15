@@ -2,12 +2,12 @@
 ### Spectrogram: Take a .wav file and print out a spectrogram image of the file
 
 import argparse
-import importlib.util
 import os
 import sys
 import wave
 import numpy as np
-from PIL import Image
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 
 ## Get raw data out of .wav file, using pythons wave library
 # The sample files are 1 channel, 16-bit samples, at 16,000 samples per
@@ -62,8 +62,9 @@ def print_data(samples, sample_rate, start_time, end_time):
               % (i, i / sample_rate, samples[i], samples[i] / 32768))
 
 # Draw the waveform: amplitude (-1 to 1) against time in seconds.
-# matplotlib is only imported here, so the rest of the script doesn't need
-# it. Set show=False to get the figure back without opening a window.
+# pyplot (which opens windows) is only imported here, so saving a
+# spectrogram never needs a display. Set show=False to get the figure back
+# without opening a window.
 def plot_wave_data(samples, sample_rate, title='Waveform', show=True):
     import matplotlib.pyplot as plt
     y = scale_raw_data(samples)
@@ -139,45 +140,78 @@ def transform(windows):
     return 20 * np.log10(magnitudes + SILENCE_FLOOR)
 
 
-## Draw the spectrogram image
-# Each window (column) is 1 pixel of width and each frequency bin is 1 pixel
-# of height. Frequency runs up the y-axis and intensity is shown by the
-# darkness of the pixel: white means quiet and black the loudest.
+## Shade levels: how dark each pixel is
+# The image shows how loud each time/frequency point is compared with the
+# loudest point in the file, in decibels: the loudest point is 0 dB (black)
+# and anything DYNAMIC_RANGE_DB (80 dB) or more below it is -80 dB (white),
+# with shades of grey in between. The absolute decibel values depend on how
+# the samples were scaled, so they don't mean much on their own; the
+# difference from the loudest point does.
 #
-# Only the top DYNAMIC_RANGE_DB decibels are drawn: the loudest value in
-# the file is black, anything DYNAMIC_RANGE_DB or more below it is white,
-# and the values in between are shades of grey. Without the limit a few
-# very quiet values (or digital silence, at -200 dB) would stretch the
-# scale and squeeze the speech into dark greys.
+# Capping at -80 dB keeps a few very quiet values, or digital silence at
+# -200 dB, from stretching the scale and squeezing the speech into dark
+# greys.
 #
 # data comes from transform(): one row per window, one column per bin.
 DYNAMIC_RANGE_DB = 80
 
-def create_spectrogram(data, output_fname):
-    # Turn it on its side: rows = frequency bins, columns = windows (time)
-    values = np.array(data, dtype=float).T
-    # Image row 0 is the top of the picture, but low frequencies belong at
-    # the bottom, so flip it: bin k goes to row (height - 1 - k)
-    values = np.flipud(values)
+def shade_levels(data):
+    data = np.asarray(data, dtype=float)
+    high = data.max()
+    if data.min() == high:
+        # Every value is the same (e.g. a silent file): nothing stands out
+        return np.full(data.shape, -float(DYNAMIC_RANGE_DB))
+    return np.clip(data - high, -DYNAMIC_RANGE_DB, 0)
 
-    # Scale the decibel values to shades: high -> 0 (black),
-    # low and below -> 255 (white)
-    high = values.max()
-    low = max(high - DYNAMIC_RANGE_DB, values.min())
-    if high > low:
-        values = np.clip(values, low, high)
-        shades = 255 * (high - values) / (high - low)
-    else:
-        shades = np.full(values.shape, 255.0)   # every value is the same
-    pixels = np.round(shades).astype(np.uint8)
 
-    img = Image.fromarray(pixels)   # 2-D array of 0-255 -> greyscale image
+## Draw the spectrogram image
+# Time (s) runs along the x-axis and frequency (Hz) up the y-axis, and each
+# window/bin is drawn as one cell: column i is the window starting at
+# i * STEP_MS, drawn centred on the middle of that window, and row k is
+# frequency k * sample_rate / window size (every 40 Hz). origin='lower'
+# puts bin 0 (0 Hz) at the bottom. The bar on the right maps each shade of
+# grey to its level in dB below the loudest point.
+#
+# The figure is drawn with matplotlib's Figure and the Agg canvas directly
+# (not pyplot), so no window is opened and no display is needed. The format
+# comes from the output file's extension (.png, .pdf, .svg, ...).
+FIGURE_SIZE = (10, 4.5)   # inches
+FIGURE_DPI = 150          # 10 x 4.5 inches -> 1500 x 675 pixels
+
+def create_spectrogram(data, sample_rate, output_fname, title=None):
+    levels = shade_levels(data)
+    n_windows, n_bins = levels.shape
+    step_s = STEP_MS / 1000
+    window_s = WINDOW_MS / 1000
+    bin_hz = sample_rate / (2 * (n_bins - 1))     # 40 Hz at 16,000 Hz
+    # Edges of the cells: window i is centred at i*step + window/2,
+    # bin k at k*bin_hz
+    left = window_s / 2 - step_s / 2
+    extent = [left, left + n_windows * step_s,
+              -bin_hz / 2, (n_bins - 0.5) * bin_hz]
+
+    fig = Figure(figsize=FIGURE_SIZE, dpi=FIGURE_DPI, layout='constrained')
+    FigureCanvasAgg(fig)
+    ax = fig.subplots()
+    # Rows of levels.T are frequency bins and columns are windows (time)
+    img = ax.imshow(levels.T, origin='lower', aspect='auto', cmap='gray_r',
+                    vmin=-DYNAMIC_RANGE_DB, vmax=0, extent=extent,
+                    interpolation='nearest')
+    ax.set_xlim(0, (n_windows - 1) * step_s + window_s)
+    ax.set_ylim(0, sample_rate / 2)
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Frequency (Hz)')
+    if title:
+        ax.set_title(title)
+    bar = fig.colorbar(img, ax=ax, pad=0.02)
+    bar.set_label('Level (dB below the loudest point)')
+
     try:
-        img.save(output_fname)
+        fig.savefig(output_fname)
     except (ValueError, OSError) as e:
         # e.g. no permission to write there
         sys.exit("Error: could not save '%s' (%s)" % (output_fname, e))
-    return img
+    return fig
 
 
 # Folder this script is in, so the default input is found no matter which
@@ -201,11 +235,12 @@ def run(input_fname, output_fname, print_range=None, plot=False):
                                 window_size(sample_rate)))
     windows = hamm_windows(windows)
     ft_windows = transform(windows)
-    img = create_spectrogram(ft_windows, output_fname)
+    create_spectrogram(ft_windows, sample_rate, output_fname,
+                       title=os.path.basename(input_fname))
     print('Read %i samples (%.2f s at %i Hz) from %s.'
           % (len(raw), len(raw) / sample_rate, sample_rate, input_fname))
-    print('Saved a %i x %i pixel spectrogram to %s.'
-          % (img.width, img.height, output_fname))
+    print('Saved a spectrogram (%i windows x %i bins) to %s.'
+          % (ft_windows.shape[0], ft_windows.shape[1], output_fname))
 
     if print_range is not None:
         print()
@@ -244,7 +279,7 @@ def interface():
                              'seconds, to check against Audacity')
     parser.add_argument('--plot', action='store_true',
                         help='also show the waveform against time in a '
-                             'window (needs matplotlib)')
+                             'window')
     args = parser.parse_args()
 
     input_fname = args.input
@@ -265,10 +300,10 @@ def interface():
     if os.path.abspath(output_fname) == os.path.abspath(input_fname):
         parser.error("output file '%s' is the same as the input file"
                      % output_fname)
-    ext = os.path.splitext(output_fname)[1].lower()
-    if ext not in Image.registered_extensions():
+    ext = os.path.splitext(output_fname)[1].lower().lstrip('.')
+    if ext not in FigureCanvasAgg.get_supported_filetypes():
         parser.error("output file '%s' needs an image extension such as "
-                     ".png or .jpg" % output_fname)
+                     ".png, .pdf or .svg" % output_fname)
     output_dir = os.path.dirname(output_fname)
     if output_dir and not os.path.isdir(output_dir):
         parser.error("folder '%s' for the output file does not exist"
@@ -278,9 +313,6 @@ def interface():
         if start < 0 or end <= start:
             parser.error('--print needs 0 <= START < END (got %g %g)'
                          % (start, end))
-    if args.plot and importlib.util.find_spec('matplotlib') is None:
-        parser.error('--plot needs matplotlib '
-                     '(pip3 install -r requirements.txt)')
 
     try:
         run(input_fname, output_fname, args.print_range, args.plot)

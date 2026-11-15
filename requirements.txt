@@ -3,7 +3,7 @@
 # Part_Of_Speech_Tagger, Author_Language_Model
 nltk>=3.10.3
 
-# Audio_Spectrogram (matplotlib is only for its --plot option)
+# Audio_Spectrogram (pillow is used by its tests)
 numpy
 matplotlib
 pillow
