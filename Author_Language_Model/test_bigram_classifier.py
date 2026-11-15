@@ -1,8 +1,8 @@
-# Tests for classifier.py
+# Tests for bigram_classifier.py
 #
 # Run from this folder with either of:
-#     python3 -m unittest test_classifier
-#     python3 test_classifier.py
+#     python3 -m unittest test_bigram_classifier
+#     python3 test_bigram_classifier.py
 #
 # The unit tests use tiny made-up corpora so the expected counts and
 # probabilities can be worked out by hand. The end-to-end tests at the
@@ -19,7 +19,7 @@ import unittest
 from collections import Counter
 from unittest import mock
 
-import classifier as C
+import bigram_classifier as C
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -257,7 +257,7 @@ class TestNltkDownload(unittest.TestCase):
 
 
 def run_cli(*args, cwd=HERE):
-    return subprocess.run([sys.executable, os.path.join(HERE, 'classifier.py'), *args],
+    return subprocess.run([sys.executable, os.path.join(HERE, 'bigram_classifier.py'), *args],
                           cwd=cwd, capture_output=True, text=True)
 
 
@@ -265,7 +265,7 @@ class TestCommandLine(unittest.TestCase):
     def test_no_arguments_prints_help(self):
         result = run_cli()
         self.assertEqual(result.returncode, 0)
-        self.assertIn('usage: classifier.py', result.stdout)
+        self.assertIn('usage: bigram_classifier.py', result.stdout)
 
     def test_missing_author_list_is_an_error(self):
         result = run_cli('nope.txt')

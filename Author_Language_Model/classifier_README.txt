@@ -3,9 +3,19 @@ Author Language Model Classifier
 
 What it does
 ------------
-classifier.py guesses who wrote a piece of text. It builds one language
-model per author from sample text, then scores each sentence of new text
-with every model and picks the author whose model fits best.
+These scripts guess who wrote a piece of text. They build one language
+model per author from sample text, then score each sentence of new text
+with every model and pick the author whose model fits best.
+
+  bigram_classifier.py   uses bigram models (each word given the one
+                         before it)
+  ngram_classifier.py    the same script, but the n-gram order can be set
+                         from 1 to 5 with --ngram N (default 2, bigrams).
+                         See "n-gram models" below.
+
+The two give identical results with bigrams. "How it works" and "Known
+Issues" describe bigram_classifier.py (originally classifier.py);
+ngram_classifier.py was written after those issues were fixed.
 
 The sample data is four authors, with excerpts from several of their books
 (10,000-20,000 lines each):
@@ -80,9 +90,46 @@ How it works
    sentence's words. Working in logs stops the product of many small
    probabilities from underflowing to 0.
 
+n-gram models (ngram_classifier.py)
+-----------------------------------
+An n-gram model predicts each word from the n-1 words before it (its
+context): a trigram model uses P(word | two previous words). With
+--ngram 1 it uses each word's own probability and ignores word order.
+ngram_classifier.py generalizes each step above:
+
+  - Training: each sentence is padded with n-1 start tokens
+    (<s> <s> the cat ... for trigrams), and the model counts k-grams for
+    every order k from 2 to n, each with its own N_c table.
+  - Smoothing: Katz backoff is applied one order at a time, from bigrams
+    up. An unseen k-gram backs off to the next order down, using the
+    context minus its first word:
+        P(word | a b) = alpha(a b) * P(word | b)        if "a b word" unseen
+    and P(word | b) backs off to P(word) in the same way. So an unseen
+    n-gram backs off one word at a time until it reaches a context the
+    model has seen. The fallback scaling and the shared vocabulary for
+    unseen words work exactly as for bigrams, at every order.
+  - Scoring: each word is scored with the n-1 words before it.
+
+Results on the same data (default mode, and the 33 test.txt sentences):
+
+  --ngram   default mode        test.txt   run time
+     1      78.2% (2355/3011)   23/33      ~1 s
+     2      80.8% (2434/3011)   26/33      ~2 s     (default)
+     3      80.8% (2433/3011)   25/33      ~2 s
+     4      80.1% (2412/3011)   25/33      ~3 s
+     5      79.8% (2402/3011)   25/33      ~4 s
+
+Longer n-grams don't help with this much data. Austen's text has 146,000
+tokens but 108,000 different trigrams, so most trigrams were seen only
+once, a new sentence's trigrams are usually unseen, and the model backs off
+to bigrams most of the time. Word choice alone (--ngram 1) already gets
+78%, so word order only adds a few points. A larger corpus per author is
+what would let n > 2 pay off, which is why the default is 2.
+
 Files in this folder
 --------------------
-  classifier.py          the script
+  bigram_classifier.py   the bigram script
+  ngram_classifier.py    the n-gram script (--ngram 1-5)
   authorlist1            the author files to use, one file name per line
   austen.txt, dickens.txt, wilde.txt, tolstoy.txt
                          the author text (ASCII), used for training
@@ -94,15 +141,16 @@ Files in this folder
   txt_utf8/              UTF-8 versions of the author files (not used)
   words                  English word list (not used; a copy of
                          SpellChecker/files/words)
-  test_classifier.py     unit and end-to-end tests (see "Running the tests")
+  test_bigram_classifier.py, test_ngram_classifier.py
+                         unit and end-to-end tests (see "Running the tests")
   test.py                scratch file for trying things out (not used)
 
 Setup
 -----
 Follow the setup in the top-level README.md (install requirements.txt).
-This script only needs nltk and its 'punkt' / 'punkt_tab' tokenizer data.
-If the tokenizer data is missing, the script downloads it (to ~/nltk_data)
-on its first run. If a download fails, it stops and says which package
+The scripts only need nltk and its 'punkt' / 'punkt_tab' tokenizer data.
+If the tokenizer data is missing, they download it (to ~/nltk_data)
+on the first run. If a download fails, they stop and say which package
 failed; on macOS that usually means the certificate step in the top-level
 README was skipped.
 
@@ -110,9 +158,18 @@ How to run
 ----------
   Usage:
 
-      python3 classifier.py <authorlist>                   (measure accuracy)
-      python3 classifier.py <authorlist> -test <textfile>  (guess authors)
-      python3 classifier.py --help                         (show the help)
+      python3 bigram_classifier.py <authorlist>                  (accuracy)
+      python3 bigram_classifier.py <authorlist> -test <textfile> (guess authors)
+      python3 bigram_classifier.py --help                        (help)
+
+  ngram_classifier.py takes the same arguments plus --ngram N, the n-gram
+  order from 1 to 5 (default 2). It can go anywhere on the command line:
+
+      python3 ngram_classifier.py <authorlist> --ngram 3
+      python3 ngram_classifier.py <authorlist> -test <textfile> --ngram 3
+
+  Everything below applies to both scripts. The expected output is for
+  bigrams; see "n-gram models" for the other orders.
 
   -test can also be written --test, and can go before or after the author
   list. Running with no arguments prints the help. If an argument is
@@ -123,7 +180,7 @@ How to run
   relative to the author list's own folder, so the script works from any
   directory, e.g. from the top of the repo:
 
-      python3 Author_Language_Model/classifier.py Author_Language_Model/authorlist1
+      python3 Author_Language_Model/bigram_classifier.py Author_Language_Model/authorlist1
 
   Each author is named after their file without the extension
   (austen.txt -> austen). The list needs at least two authors.
@@ -131,7 +188,7 @@ How to run
   Default mode: split each author's text, train on one part and measure
   accuracy on the rest:
 
-      python3 classifier.py authorlist1
+      python3 bigram_classifier.py authorlist1
 
   Each author's text is split into sentences. Every 10th sentence
   (TEST_EVERY) is held out for testing and the model is trained on the
@@ -151,7 +208,7 @@ How to run
   -test mode: train on the full author files and classify every sentence
   of another file:
 
-      python3 classifier.py authorlist1 -test test.txt
+      python3 bigram_classifier.py authorlist1 -test test.txt
 
   Output is one line per sentence: its number, the author whose model
   scored best, and the start of the sentence.
@@ -191,26 +248,39 @@ Running the tests
 -----------------
 From inside this folder:
 
-      python3 -m unittest test_classifier
+      python3 -m unittest test_bigram_classifier test_ngram_classifier
 
-  (or python3 test_classifier.py). There are 33 tests, and they take about
-  4 seconds. Most use tiny made-up corpora, so the expected counts and
+  (or run either file with python3). test_bigram_classifier.py has 33
+  tests and takes about 4 seconds; test_ngram_classifier.py has 29 and
+  takes about 9.
+
+  Most use tiny made-up corpora, so the expected counts and
   probabilities can be worked out by hand: sentence splitting, the start
   token, N_c, Good-Turing adjusted counts, that probabilities add up to 1,
   backoff, scoring, the author list and the NLTK download check. The rest
   train on the real author files: the model checks, both modes, and the
   command line (including running from another folder).
 
-  Each of the fixed bugs below was put back into the code, one at a time,
-  to check that the tests catch it, and they all do (#1-#5, #11, #14 and
-  the fallback scaling).
+  The n-gram tests also check that the probabilities add up to 1 at every
+  order from 1 to 5, that unseen n-grams back off to the right shorter
+  context, and that with n = 2 every probability and the default-mode
+  output are exactly the same as bigram_classifier.py's.
+
+  Each of the fixed bugs below was put back into bigram_classifier.py, one
+  at a time, to check that the tests catch it, and they all do (#1-#5,
+  #11, #14 and the fallback scaling). The n-gram tests were checked the
+  same way against typical n-gram mistakes (backing off to the wrong
+  context, a context window one word short, too little start padding, one
+  N_c table for every order, smoothing the orders top-down, and the
+  fallback scaling), and catch all of them.
 
 Known Issues
 ============
-These were confirmed by running the script with NLTK 3.10.3 and Python 3.14.
-Line numbers refer to classifier.py. Accuracy figures use the default-mode
-split. Up to #6 the script classified physical lines; from #10 on it
-classifies sentences.
+These were found in the original classifier.py (now bigram_classifier.py)
+and confirmed by running it with NLTK 3.10.3 and Python 3.14. They're all
+fixed except #18, and ngram_classifier.py was written after they were
+fixed. Accuracy figures use the default-mode split. Up to #6 the script
+classified physical lines; from #10 on it classifies sentences.
 
 Accuracy so far:
 
@@ -401,7 +471,7 @@ Cleanup
     LanguageModel() without the required author argument (TypeError), used
     paths like '/txt_ascii/austen.txt' (the root of the file system), and
     only printed results instead of checking them. They were replaced by
-    test_classifier.py (see "Running the tests"). get_prob_of_w(), an
+    test_bigram_classifier.py (see "Running the tests"). get_prob_of_w(), an
     add-one version only used by a test function, and test_get_prob_of_w()
     were removed.
 
