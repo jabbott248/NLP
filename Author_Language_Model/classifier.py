@@ -16,7 +16,6 @@ import argparse
 import os
 import sys
 import re
-from tokenize import Double
 import nltk
 import math
 from collections import Counter
@@ -38,14 +37,15 @@ TEST_EVERY = 10
 # Language model to pass to methods to calculate probabilities
 class LanguageModel():
     def __init__(self, author: str):
-        self.unigrams = {}
-        self.bigrams = {}
+        self.unigrams = Counter()   # token -> count
+        self.bigrams = Counter()    # (prev_token, token) -> count
         self.frequencies = {}       # N_c: number of bigrams seen exactly c times
         self.total_words = 0
         self.unknown_unigram = 1    # P(word) for each word never seen in training
         self.seen_word_share = 1    # total P(word) shared by the words seen in training
         self.context_counts = {}    # prev_word -> number of bigrams starting with it
         self.backoff_weight = {}    # prev_word -> Katz backoff weight alpha
+        self.seen_scale = {}        # prev_word -> scale for seen bigrams (fallback only)
         self.author = author
 
     # Counts unigrams and bigrams in sentences, a list of sentences that are
@@ -54,20 +54,9 @@ class LanguageModel():
     # P(first word | START_TOKEN) is learned from every sentence start.
     def train(self, sentences: list):
         for tokens in sentences:
-            prev_token = START_TOKEN
-            for token in tokens:
-                # update unigram count
-                if token in self.unigrams.keys():
-                    self.unigrams[token] += 1  # if token already exists, increase its count
-                else:
-                    self.unigrams[token] = 1   # if token does not exist, add it to the dictionary
-                # update bigram count
-                if (prev_token, token) in self.bigrams.keys():
-                    self.bigrams[(prev_token, token)] += 1
-                else:
-                    self.bigrams[(prev_token, token)] = 1
-                # update the previous token for bigram counts
-                prev_token = token
+            self.unigrams.update(tokens)
+            # pair each token with the one before it, starting from START_TOKEN
+            self.bigrams.update(zip([START_TOKEN] + tokens, tokens))
 
         # START_TOKEN is not a unigram (it's never predicted as a word), so
         # this is the number of real tokens and unigram probabilities add up
@@ -110,14 +99,22 @@ class LanguageModel():
             context_counts[prev_word] += c
             discounted_counts[prev_word] += self.gt_adjusted_count(c)
             seen_unigram_mass[prev_word] += self.unigram_prob(word)
-        unseen_share = self.frequencies[1] / sum(self.bigrams.values())
+        # Good-Turing's overall share for unseen bigrams (N_1 / N), capped at
+        # half. It's only near 1 for tiny training texts where almost every
+        # bigram was seen once.
+        unseen_share = min(self.frequencies[1] / sum(self.bigrams.values()), 0.5)
         for prev_word, total in context_counts.items():
-            leftover = 1 - discounted_counts[prev_word] / total
-            if leftover <= 0:
-                # Every word after prev_word was seen GT_MAX_COUNT or more
-                # times, so nothing was discounted. Use Good-Turing's overall
-                # share for unseen bigrams (N_1 / N) so they don't get 0.
+            seen_share = discounted_counts[prev_word] / total
+            if seen_share < 1:
+                leftover = 1 - seen_share
+            else:
+                # Nothing was discounted after prev_word: every word after it
+                # was seen GT_MAX_COUNT or more times (or its c* wasn't
+                # smaller than c). Reserve unseen_share for unseen words so
+                # they don't get 0, and scale the seen words down to make
+                # room, so the total is still 1.
                 leftover = unseen_share
+                self.seen_scale[prev_word] = (1 - leftover) / seen_share
             self.backoff_weight[prev_word] = leftover / (1 - seen_unigram_mass[prev_word])
         self.context_counts = context_counts
 
@@ -179,36 +176,12 @@ def read_authorlist(authorlist: str):
     return fnames
 
 
-# Calculate probability that wn given wn-1 in a text file
-def get_prob_of_w(fname: str, w0: str, w1: str):
-    tokens = []
-    v = 0          # V: Vocabulay, number of unique words
-    w_bigram_count = 0
-    w1_count = 0
-    # P(wn | wn-1): (Count(wn-1 wn)+1) / (Count(wn-1) + V)
-    with open(fname, 'r') as f:
-        prev_word = ''                              # pointer to previous word
-        for line in f:                              # iterate through each line of the file
-            new_tokens = nltk.word_tokenize(line)   
-            for token in new_tokens:                # iterate through each word of the line
-                if not token in tokens:
-                    v = v+1
-                if token == w0 and prev_word == w1:
-                    w_bigram_count = w_bigram_count+1
-                if token == w1:
-                    w1_count = w1_count+1           # increase the count of w1
-                tokens.append(token)                # attach new token to global token list
-                prev_word = token                   # move prev word pointer
-
-    prob = (w_bigram_count + 1) / (w1_count + v)
-    return prob
-
-
 # Returns P(word | prev_word): the probability that word comes right after
 # prev_word, using lm's bigram counts with Good-Turing smoothing and Katz
 # backoff:
 #   - seen bigram:   P = c* / Count(prev_word), where c* is the bigram's
-#                    Good-Turing adjusted count
+#                    Good-Turing adjusted count (scaled down after the few
+#                    words where nothing was discounted; see smooth())
 #   - unseen bigram: P = alpha(prev_word) * P(word), where alpha shares out
 #                    the probability Good-Turing took from the seen bigrams
 #   - prev_word never seen in training: P = P(word)
@@ -221,7 +194,7 @@ def gt_get_prob_of_w(lm: LanguageModel, word: str, prev_word: str):
         return lm.unigram_prob(word)
     c = lm.bigrams.get((prev_word, word), 0)
     if c > 0:
-        return lm.gt_adjusted_count(c) / prev_count
+        return lm.gt_adjusted_count(c) / prev_count * lm.seen_scale.get(prev_word, 1)
     return lm.backoff_weight[prev_word] * lm.unigram_prob(word)
 
 # Scores a sentence (a list of tokens) with lm. Returns its cost: the sum
@@ -238,46 +211,6 @@ def get_prob_of_sentence(lm: LanguageModel, tokens: list):
         prev_token = token
 
     return total_cost
-
-def test_prob_of_sentence():
-    test_sentence = 'Oh, the difference of situation and habit! I wish you would try to understand what an amiable young man may be likely to feel in directly opposing those, whom as child and boy he has been looking up to all his life.'
-    austen_lm = LanguageModel()
-    austen_lm.create_lm('/txt_ascii/austen.txt')
-    austen_prob = get_prob_of_sentence(austen_lm, test_sentence)
-
-    dickens_lm = LanguageModel()
-    dickens_lm.create_lm('/txt_ascii/dickens.txt')
-    dickens_prob = get_prob_of_sentence(dickens_lm, test_sentence)
-
-    tolstoy_lm = LanguageModel()
-    tolstoy_lm.create_lm('/txt_ascii/tolstoy.txt')
-    tolstoy_prob = get_prob_of_sentence(tolstoy_lm, test_sentence)
-
-    print('austen:  %f'%austen_prob)
-    print('dickens: %f'%dickens_prob)
-    print('tolstoy: %f'%tolstoy_prob)
-
-def test_good_turing():
-    lm = LanguageModel()
-    lm.create_lm('/txt_ascii/tolstoy.txt')
-    prob = gt_get_prob_of_w(lm, 'may', 'family')
-    print('probability: %.6f'%prob)
-
-
-
-def test_lm():
-    lm = LanguageModel()
-    lm.create_lm('/txt_ascii/austen.txt')
-    print(lm.frequencies)
-
-    
-
-def test_get_prob_of_w():
-    file_name = '/txt_ascii/austen.txt'
-    res = get_prob_of_w(file_name, 'be', 'may')
-    print(f'{res=}')
-
-
 
 # Smooths every model using one vocabulary shared by all of them: every word
 # in any author's text, plus 1 for words that none of them used.

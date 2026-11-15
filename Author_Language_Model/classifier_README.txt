@@ -58,6 +58,11 @@ How it works
          P(word | prev_word) = alpha(prev_word) * P(word)
      alpha is chosen so that P(w | prev_word) adds up to 1 over all words.
      If prev_word itself was never seen, P(word) is used directly.
+     For the few previous words (22-38 per author) where every word after
+     them was seen 5 or more times, Good-Turing frees up nothing. There,
+     unseen words get Good-Turing's overall unseen share (N_1 / N) and the
+     seen words are scaled down to make room (seen_scale), so the total is
+     still 1.
 
    - Unseen words: unigram Good-Turing says the words an author never used
      share a total probability of N_1 / N (the fraction of their tokens
@@ -89,6 +94,7 @@ Files in this folder
   txt_utf8/              UTF-8 versions of the author files (not used)
   words                  English word list (not used; a copy of
                          SpellChecker/files/words)
+  test_classifier.py     unit and end-to-end tests (see "Running the tests")
   test.py                scratch file for trying things out (not used)
 
 Setup
@@ -136,11 +142,11 @@ How to run
   Expected output:
 
       austen   484/576 correct
-      dickens   557/694 correct
-      wilde   495/677 correct
+      dickens   556/694 correct
+      wilde   494/677 correct
       tolstoy   900/1064 correct
 
-  That's 80.9% overall. Guessing at random would give 25%.
+  That's 80.8% overall. Guessing at random would give 25%.
 
   -test mode: train on the full author files and classify every sentence
   of another file:
@@ -181,6 +187,24 @@ How to run
   test.txt.
 
 
+Running the tests
+-----------------
+From inside this folder:
+
+      python3 -m unittest test_classifier
+
+  (or python3 test_classifier.py). There are 33 tests, and they take about
+  4 seconds. Most use tiny made-up corpora, so the expected counts and
+  probabilities can be worked out by hand: sentence splitting, the start
+  token, N_c, Good-Turing adjusted counts, that probabilities add up to 1,
+  backoff, scoring, the author list and the NLTK download check. The rest
+  train on the real author files: the model checks, both modes, and the
+  command line (including running from another folder).
+
+  Each of the fixed bugs below was put back into the code, one at a time,
+  to check that the tests catch it, and they all do (#1-#5, #11, #14 and
+  the fallback scaling).
+
 Known Issues
 ============
 These were confirmed by running the script with NLTK 3.10.3 and Python 3.14.
@@ -195,7 +219,7 @@ Accuracy so far:
   #1-#3 fixed, lines (blank lines skipped)                   50.2%
   #1-#5 fixed, lines (blank lines included)                  65.9%
   #1-#6 fixed, lines (blank lines skipped)                   76.7%
-  #1-#11 fixed: current code, sentences                      80.9%
+  #1-#11 fixed: current code, sentences                      80.8%
 
   For comparison, other ways of smoothing the same bigram counts (lines,
   blank lines skipped):
@@ -277,11 +301,14 @@ Wrong results in scoring
      now split evenly over the unseen words in a vocabulary shared by all
      the models (smooth_models()).
 
-   Now every word's next-word probabilities add up to exactly 1, except
-   for 19-32 previous words per author (out of 8,000-11,000) whose
-   followers were all seen 5 or more times. Nothing gets freed up there, so
-   unseen bigrams get Good-Turing's overall unseen share (N_1 / N) instead,
-   and the total comes to up to 1.34.
+   A third turned up while writing the tests (#16): for the 22-38 previous
+   words per author where Good-Turing frees up nothing, unseen bigrams got
+   Good-Turing's overall unseen share (N_1 / N) on top of the seen ones,
+   so their probabilities added up to as much as 1.34 (and to 2 on a tiny
+   corpus). The seen bigrams there are now scaled down to make room
+   (seen_scale), and the unseen share is capped at half. Now every word's
+   next-word probabilities add up to exactly 1. Accuracy went from 80.9%
+   to 80.8% (two sentences changed).
 
 6. [FIXED] Blank lines were always given to the first author.
    A blank line has no tokens, so every model gave it a cost of 0. It was a
@@ -322,7 +349,7 @@ Evaluation and data
     read_sentences() now splits each file into paragraphs at blank lines,
     joins each paragraph's lines, and splits it into sentences with
     nltk.sent_tokenize(). Both modes classify sentences: default mode holds
-    out every 10th sentence (80.9% correct), and -test mode prints one
+    out every 10th sentence (80.8% correct), and -test mode prints one
     guess per sentence of the input file.
     sent_tokenize isn't perfect on this text: for example, it splits
     "...set off to-morrow.'-If he would say so..." into two sentences at
@@ -369,27 +396,26 @@ Usability
 
 Cleanup
 -------
-16. Unused and broken code (lines 183-204, 242-279).
-    - test_prob_of_sentence(), test_good_turing() and test_lm() call
-      LanguageModel() without the required author argument (TypeError), and
-      use paths like '/txt_ascii/austen.txt', which point to the root of
-      the file system. They also don't call smooth_models(), which every
-      model now needs before it can score anything, and
-      test_prob_of_sentence() passes a string to get_prob_of_sentence(),
-      which now takes a list of tokens.
-    - get_prob_of_w() (an add-one version) is only used by a test function.
-      It also checks "token in tokens" against a list, which gets very slow
-      on large files.
+16. [FIXED] Unused and broken code.
+    test_prob_of_sentence(), test_good_turing() and test_lm() called
+    LanguageModel() without the required author argument (TypeError), used
+    paths like '/txt_ascii/austen.txt' (the root of the file system), and
+    only printed results instead of checking them. They were replaced by
+    test_classifier.py (see "Running the tests"). get_prob_of_w(), an
+    add-one version only used by a test function, and test_get_prob_of_w()
+    were removed.
 
-17. Small cleanups:
-    - "from tokenize import Double" (line 17) is unused. It comes from
-      Python's own source-code tokenizer, not NLTK.
-    - The "x in d.keys()" counting blocks in LanguageModel.train() can use
-      collections.Counter.
-    (The docstring's "Good-Touring" was corrected as part of #4 and #5, and
-    the unused tokens list was removed with the #10 rewrite.)
+17. [FIXED] Small cleanups:
+    - The unused "from tokenize import Double" was removed. (It came from
+      Python's own source-code tokenizer, not NLTK.)
+    - LanguageModel.train() counts with collections.Counter instead of
+      "if x in d.keys(): ... else: ..." blocks; unigrams and bigrams are
+      Counters.
+    - The docstring's "Good-Touring" was corrected as part of #4 and #5, and
+      the unused tokens list was removed with the #10 rewrite.
 
-18. Unused files: words, txt_ascii/, txt_utf8/ and test.py.
-    txt_ascii/ and txt_utf8/ are the original author files, so they still
-    contain the test.txt passages. Don't train on them with test.txt, or
-    the test passages will be in the training data again.
+18. Unused files: words and test.py.
+    txt_ascii/ and txt_utf8/ are also unused, but are kept on purpose as
+    the original author files. They still contain the test.txt passages,
+    so don't train on them with test.txt, or the test passages will be in
+    the training data again.
