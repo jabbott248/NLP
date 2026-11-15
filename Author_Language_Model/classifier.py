@@ -90,48 +90,55 @@ def get_prob_of_w(fname: str, w0: str, w1: str):
     return prob
 
 
-def gt_get_prob_of_w(lm: LanguageModel, w0: str, w1: str):
+# Returns P(word | prev_word): the probability that word comes right after
+# prev_word, using lm's bigram counts with Good-Turing smoothing.
+#   lm:        the author's language model to use
+#   word:      the current word
+#   prev_word: the word before it ('' at the start of a line)
+# Note: the result is not always a valid probability (it can be above 1);
+# see Known Issues #4 and #5 in classifier_README.txt.
+def gt_get_prob_of_w(lm: LanguageModel, word: str, prev_word: str):
     # Account for key Error in bigrams and frequincies, if no key then sub N(1)/N
-    if (w1,w0) in lm.bigrams.keys():                            # if the bigram has a count 1 or greater
-        c = lm.bigrams[(w1,w0)]+1
+    if (prev_word,word) in lm.bigrams.keys():                   # if the bigram has count 1 or greater
+        c = lm.bigrams[(prev_word,word)]+1
     else:                                                       # if the bigram has a zero count
         c_star = lm.frequencies[1] / len(lm.unigrams.keys())
-        if w1 in lm.unigrams.keys():
-            return c_star / lm.unigrams[w1]
+        if prev_word in lm.unigrams.keys():
+            return c_star / lm.unigrams[prev_word]
         else:
             return c_star / lm.unknown_unigram
 
     # Check bigram frequency exists
     try:
-        n_c1 = lm.frequencies[lm.bigrams[(w1,w0)]+1]
-        n_c = lm.frequencies[lm.bigrams[(w1,w0)]]
+        n_c1 = lm.frequencies[lm.bigrams[(prev_word,word)]+1]
+        n_c = lm.frequencies[lm.bigrams[(prev_word,word)]]
         c_star = c * n_c1 / n_c
     except(KeyError):
         #print('KEY ERROR')
         c_star = c
 
-    if w1 in lm.unigrams.keys():
-        prob = c_star / lm.unigrams[w1]
+    if prev_word in lm.unigrams.keys():
+        prob = c_star / lm.unigrams[prev_word]
     else:
         prob = c_star / 1
 
     return prob
 
-# Might have to take absolute values when multipling total prob * log_prob
+# Scores a sentence with lm. Returns its cost: the sum of -log10
+# P(word | prev_word) over every word. Lower cost = more likely, so the
+# author whose model gives the lowest cost is the best guess.
+# Costs are added because -log(a*b) = -log(a) + -log(b); working in logs
+# stops the product of many small probabilities underflowing to 0.
 def get_prob_of_sentence(lm: LanguageModel, sentence: str):
     tokens = nltk.word_tokenize(sentence)
-    total_prob = 0
+    total_cost = 0
     prev_token = ''
     for token in tokens:
-        word_prob = gt_get_prob_of_w(lm, prev_token, token)
-        log_prob = abs(math.log10(word_prob))
-        if total_prob == 0:     # make sure we are not multiplying by 0
-            total_prob = log_prob
-        else:
-            total_prob = total_prob * log_prob
+        word_prob = gt_get_prob_of_w(lm, token, prev_token)
+        total_cost += -math.log10(word_prob)
         prev_token = token
 
-    return total_prob
+    return total_cost
 
 def test_prob_of_sentence():
     test_sentence = 'Oh, the difference of situation and habit! I wish you would try to understand what an amiable young man may be likely to feel in directly opposing those, whom as child and boy he has been looking up to all his life.'
@@ -220,14 +227,12 @@ def run_no_test_flag(authorlist: str):
 
         with open(fname, 'r') as training_txt:
             for line in training_txt:
-                highest_prob = -1
+                lowest_cost = math.inf   # lowest cost = most likely author
                 author = ''
                 for lm in models:
-                    #print('lm auth: %s'%lm.author)
-                    new_prob = get_prob_of_sentence(lm, line)
-                    if new_prob > highest_prob:
-                        #print('Changing auth from %s to %s'%(author,lm.author))
-                        highest_prob = new_prob
+                    new_cost = get_prob_of_sentence(lm, line)
+                    if new_cost < lowest_cost:
+                        lowest_cost = new_cost
                         author = lm.author
                 author_guess = re.sub('.txt', '', author)
                 author_guess = re.sub('dev_', '', author_guess)
@@ -259,12 +264,12 @@ def run_with_test_flag(authorlist: str, test_fname: str):
         count = 1
         for line in f:
             line = line.strip()
-            highest_prob = -1
+            lowest_cost = math.inf   # lowest cost = most likely author
             author = ''
             for lm in models:
-                new_prob = get_prob_of_sentence(lm, line)
-                if new_prob > highest_prob:
-                    highest_prob = new_prob
+                new_cost = get_prob_of_sentence(lm, line)
+                if new_cost < lowest_cost:
+                    lowest_cost = new_cost
                     author = lm.author
 
             print('Line %i: %s'%(count, author))

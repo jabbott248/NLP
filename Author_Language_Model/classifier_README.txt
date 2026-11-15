@@ -3,7 +3,7 @@ Author Language Model Classifier
 
 What it does
 ------------
-classifier.py guesses who wrote a piece of text. It builds one language
+classifier.py guesses who wrote a piece of text. It builds one language.  
 model per author from sample text, then scores each line of new text with
 every model and picks the author whose model fits best.
 
@@ -79,14 +79,16 @@ relative to the current directory.
   testing), overwriting any existing ones. Each test line is classified, and
   it prints how many lines of each author were guessed correctly.
 
-  Expected output (current code, see Known Issues):
+  Expected output:
 
-      austen   565/1300 correct
-      dickens   311/1300 correct
-      wilde   287/1000 correct
-      tolstoy   679/2000 correct
+      austen   797/1300 correct
+      dickens   488/1300 correct
+      wilde   376/1000 correct
+      tolstoy   836/2000 correct
 
-  That's 32.9% overall. Guessing at random would give 25%.
+  That's 44.6% overall. Guessing at random would give 25%. Austen's score
+  includes 230 blank lines that are always given to the first author (see
+  Known Issues #6); without them it's 50.2%.
 
   -test mode: train on the full author files and classify every line of
   another file:
@@ -96,12 +98,14 @@ relative to the current directory.
   The -test flag must come second, after the author list. Output is one
   line per input line, naming the author file that scored best:
 
-      Line 1: tolstoy.txt
+      Line 1: austen.txt
       Line 2: austen.txt
       ...
       Line 12: austen.txt
 
-  test.txt is all Austen, but the current code gets 8 of 12 lines right.
+  test.txt is all Austen, and all 12 lines are labeled austen.txt. (Before
+  issues #1-#3 were fixed it got 8 of 12.) It's an easy test, though: see
+  Known Issues #9.
 
 
 Known Issues
@@ -110,12 +114,11 @@ These were confirmed by running the script with NLTK 3.10.3 and Python 3.14.
 Line numbers refer to classifier.py. Accuracy figures use the default-mode
 split, with blank lines left out unless stated otherwise.
 
-Summary of what fixing the scoring would do:
+Accuracy so far, and what fixing the rest would do:
 
-  As it is now (blank lines included)                        32.9%
-  As it is now, blank lines skipped (#6)                     35.7%
-  + add costs and pick the lowest (#2, #3)                   22.8%
-  + pass the arguments in the right order (#1)               50.2%
+  Original code (blank lines included)                       32.9%
+  #1-#3 fixed: current code (blank lines included)           44.6%
+  #1-#3 fixed, blank lines skipped (#6)                      50.2%
   Replace Good-Turing with add-one smoothing (#4, #5)        68.6%
   Replace Good-Turing with bigram/unigram interpolation      76.1%
     (0.7 * P(word | previous) + 0.3 * P(word), add-one on the unigram)
@@ -126,27 +129,31 @@ four right.
 
 Wrong results in scoring
 ------------------------
-1. Arguments to gt_get_prob_of_w() are swapped (line 126).
-   gt_get_prob_of_w(lm, w0, w1) means P(w0 | w1): w0 is the current word
-   and w1 the previous one (see test_good_turing() and the comment on
-   get_prob_of_w()). get_prob_of_sentence() calls
+1. [FIXED] Arguments to gt_get_prob_of_w() were swapped.
+   gt_get_prob_of_w() returns P(word | previous word), with the current
+   word first, but get_prob_of_sentence() called
        gt_get_prob_of_w(lm, prev_token, token)
-   so it looks up the bigram with the two words reversed and divides by the
-   count of the current word instead of the previous one. It should be
+   so it looked up the bigram with the two words reversed and divided by
+   the count of the current word instead of the previous one. It now calls
        gt_get_prob_of_w(lm, token, prev_token)
+   The parameters were renamed from w0 / w1 to word / prev_word, and the
+   function has a header comment explaining them.
 
-2. Log costs are multiplied instead of added (lines 127-131).
-   abs(math.log10(p)) turns each probability into a cost, and costs must
-   be added: -log(a*b) = -log(a) + -log(b). The product of costs doesn't
-   mean anything. The "if total_prob == 0" check is there to avoid
-   multiplying by the starting value of 0; with addition it isn't needed.
+2. [FIXED] Log costs were multiplied instead of added.
+   -log10(p) turns each probability into a cost, and costs must be added:
+   -log(a*b) = -log(a) + -log(b). The product of costs didn't mean
+   anything. get_prob_of_sentence() now returns the sum of the costs.
+   It uses -math.log10(p) rather than abs(math.log10(p)). They're the same
+   for real probabilities, but while #4 still lets some values go above 1,
+   abs() would wrongly turn those into a penalty.
    (The POS tagger had the same bug, fixed there as issue #5.)
 
-3. The highest score wins, but a higher cost means less likely
-   (lines 223-231 and 262-268).
-   With costs, the most likely author has the lowest total. Fixing #2 and
-   #3 together without #1 drops accuracy to 22.8%; all three together give
-   50.2%.
+3. [FIXED] The highest score won, but a higher cost means less likely.
+   With costs, the most likely author has the lowest total. Both
+   run_no_test_flag() and run_with_test_flag() now pick the author with
+   the lowest cost. Fixing #2 and #3 without #1 actually dropped accuracy
+   to 22.8%; all three together raise it from 35.7% to 50.2% (blank lines
+   skipped).
 
 4. The Good-Turing frequency table N_c is wrong (lines 51-54, 59-60).
    - When a bigram's count goes from c-1 to c, N_c is increased but N_(c-1)
@@ -162,7 +169,7 @@ Wrong results in scoring
    collections.Counter(self.bigrams.values()).
    frequencies[0] (line 60) is computed but never used.
 
-5. Other Good-Turing problems in gt_get_prob_of_w() (lines 93-118).
+5. Other Good-Turing problems in gt_get_prob_of_w() (lines 93-125).
    - Unseen bigrams get N_1 / V divided by the previous word's count,
      where V is the number of distinct words. That isn't the Good-Turing
      estimate, and with N_1 forced to 1 it's just 1 / V.
@@ -173,23 +180,23 @@ Wrong results in scoring
      uses c* = c + 1, which mixes Good-Turing with add-one. The usual
      approach is to apply Good-Turing only to small counts (e.g. c < 5) and
      use the raw count above that.
-   - "prob = c_star / 1" (line 116) can never run: if the bigram was seen,
+   - "prob = c_star / 1" (line 123) can never run: if the bigram was seen,
      the previous word was seen too.
    Good-Turing is fiddly to get right for bigrams. A simpler method such
    as interpolation (76.1%) or add-one (68.6%) does much better than the
    current code.
 
-6. Blank lines are always given to the first author (lines 223-231 and
-   262-268).
-   A blank line has no tokens, so every model scores it 0. Because the best
-   score starts at -1, the first model in the author list always wins. 1,088
+6. Blank lines are always given to the first author (lines 230-236 and
+   267-273).
+   A blank line has no tokens, so every model gives it a cost of 0. It's a
+   tie, and the first model in the author list always wins it. 1,088
    of the 5,600 test lines are blank, so Austen (first in authorlist1) gets
    230 free "correct" answers. -test mode also prints an author for blank
    lines. Blank lines should be skipped.
 
 Evaluation and data
 -------------------
-7. The train/test file names are swapped (lines 197-203).
+7. The train/test file names are swapped (lines 204-210).
    Every 10th line goes to training_<author>.txt and is used for testing.
    The other 90% goes to dev_<author>.txt and is used to build the models.
    A 90/10 split is fine, but the names are backwards. The comment
@@ -203,8 +210,9 @@ Evaluation and data
 9. test.txt is part of the training data.
    All 12 lines of test.txt appear word for word in austen.txt, which is
    what -test mode trains on (11 of them are also in dev_austen.txt). So
-   it doesn't test text the model hasn't seen. Even so, the current code
-   only labels 8 of the 12 lines as Austen.
+   it doesn't test text the model hasn't seen, which is why it now gets
+   all 12 right. A better test file would use Austen text that isn't in
+   austen.txt.
 
 10. It classifies physical lines, not sentences.
     The text is hard-wrapped at about 70 characters, so each "line" is a
@@ -221,7 +229,7 @@ Evaluation and data
 
 Usability
 ---------
-12. Command-line handling (lines 273-286).
+12. Command-line handling (lines 278-291).
     The -test flag has to be the second argument. There's no usage
     message: running with no arguments only prints "Please supply an
     authorlist", and wrong arguments print "Wrong number of arguments" or
@@ -243,7 +251,7 @@ Usability
 
 Cleanup
 -------
-16. Unused and broken code (lines 68-90, 136-173).
+16. Unused and broken code (lines 69-90, 143-180).
     - test_prob_of_sentence(), test_good_turing() and test_lm() call
       LanguageModel() without the required author argument (TypeError), and
       use paths like '/txt_ascii/austen.txt', which point to the root of
