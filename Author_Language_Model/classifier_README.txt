@@ -13,9 +13,9 @@ with every model and pick the author whose model fits best.
                          from 1 to 5 with --ngram N (default 2, bigrams).
                          See "n-gram models" below.
 
-The two give identical results with bigrams. "How it works" and "Known
-Issues" describe bigram_classifier.py (originally classifier.py);
-ngram_classifier.py was written after those issues were fixed.
+The two give identical results with bigrams. "How it works" describes
+bigram_classifier.py, and "n-gram models" explains what ngram_classifier.py
+does differently.
 
 The sample data is four authors, with excerpts from several of their books
 (10,000-20,000 lines each):
@@ -138,7 +138,10 @@ Files in this folder
                          "How to run")
   txt_ascii/             the original author files, before the test.txt
                          passages were taken out (not used)
-  txt_utf8/              UTF-8 versions of the author files (not used)
+  txt_utf8/              UTF-8 versions of the original author files (not
+                         used). Both folders still contain the test.txt
+                         passages, so don't train on them and test with
+                         test.txt.
   words                  English word list (not used; a copy of
                          SpellChecker/files/words)
   test_bigram_classifier.py, test_ngram_classifier.py
@@ -266,226 +269,14 @@ From inside this folder:
   context, and that with n = 2 every probability and the default-mode
   output are exactly the same as bigram_classifier.py's.
 
-  Each of the fixed bugs below was put back into bigram_classifier.py, one
-  at a time, to check that the tests catch it, and they all do (#1-#5,
-  #11, #14 and the fallback scaling). The n-gram tests were checked the
-  same way against typical n-gram mistakes (backing off to the wrong
-  context, a context window one word short, too little start padding, one
-  N_c table for every order, smoothing the orders top-down, and the
-  fallback scaling), and catch all of them.
-
-Known Issues
-============
-These were found in the original classifier.py (now bigram_classifier.py)
-and confirmed by running it with NLTK 3.10.3 and Python 3.14. They're all
-fixed except #18, and ngram_classifier.py was written after they were
-fixed. Accuracy figures use the default-mode split. Up to #6 the script
-classified physical lines; from #10 on it classifies sentences.
-
-Accuracy so far:
-
-  Original code, lines (blank lines included)                32.9%
-  #1-#3 fixed, lines (blank lines included)                  44.6%
-  #1-#3 fixed, lines (blank lines skipped)                   50.2%
-  #1-#5 fixed, lines (blank lines included)                  65.9%
-  #1-#6 fixed, lines (blank lines skipped)                   76.7%
-  #1-#11 fixed: current code, sentences                      80.8%
-
-  For comparison, other ways of smoothing the same bigram counts (lines,
-  blank lines skipped):
-    add-one (Laplace)                                        68.6%
-    interpolation: 0.7 * P(word | previous) + 0.3 * P(word)  76.1%
-
-The line and sentence figures aren't measured on exactly the same test
-text: holding out every 10th sentence picks different text from holding
-out every 10th line. But a sentence (17-25 tokens) gives the model more to
-go on than a line fragment (about 13), which is where most of the gain
-comes from.
-
-Wrong results in scoring
-------------------------
-1. [FIXED] Arguments to gt_get_prob_of_w() were swapped.
-   gt_get_prob_of_w() returns P(word | previous word), with the current
-   word first, but get_prob_of_sentence() called
-       gt_get_prob_of_w(lm, prev_token, token)
-   so it looked up the bigram with the two words reversed and divided by
-   the count of the current word instead of the previous one. It now calls
-       gt_get_prob_of_w(lm, token, prev_token)
-   The parameters were renamed from w0 / w1 to word / prev_word, and the
-   function has a header comment explaining them.
-
-2. [FIXED] Log costs were multiplied instead of added.
-   -log10(p) turns each probability into a cost, and costs must be added:
-   -log(a*b) = -log(a) + -log(b). The product of costs didn't mean
-   anything. get_prob_of_sentence() now returns the sum of the costs.
-   It uses -math.log10(p) rather than abs(math.log10(p)). They're the same
-   for real probabilities, but before #4 was fixed some values went above
-   1, and abs() turned those into a penalty.
-   (The POS tagger had the same bug, fixed there as issue #5.)
-
-3. [FIXED] The highest score won, but a higher cost means less likely.
-   With costs, the most likely author has the lowest total. Both
-   run_no_test_flag() and run_with_test_flag() now pick the author with
-   the lowest cost. Fixing #2 and #3 without #1 actually dropped accuracy
-   to 22.8%; all three together raise it from 35.7% to 50.2% (blank lines
-   skipped).
-
-4. [FIXED] The Good-Turing frequency table N_c was wrong.
-   - When a bigram's count went from c-1 to c, N_c was increased but
-     N_(c-1) wasn't decreased, so N_c ended up as "bigrams that ever
-     reached count c". For Austen, N_2 was stored as 14,435; the true
-     value is 6,491.
-   - N_1 was then overwritten with 1. The true N_1 for Austen is 38,351.
-   - Together these gave a bigram seen once an adjusted count of
-     c* = 2 * 14,435 / 1 = 28,870 instead of 0.34.
-   56% of seen bigrams got a "probability" above 1, and the probabilities
-   of the words seen after "the" added up to 5,872 instead of 1.
-   N_c is now computed once counting is finished, with
-   Counter(self.bigrams.values()), and nothing overwrites it. The unused
-   frequencies[0] was removed.
-
-5. [FIXED] Other Good-Turing problems in gt_get_prob_of_w().
-   - Unseen bigrams got N_1 / V divided by the previous word's count. That
-     isn't the Good-Turing estimate, and with N_1 forced to 1 it was just
-     1 / V. They now get the probability Good-Turing frees up from the seen
-     bigrams, shared out with Katz backoff (see "How it works").
-   - If the previous word was never seen, it divided by unknown_unigram, a
-     fraction, which made the probability bigger, not smaller. It now uses
-     the unigram probability P(word).
-   - When N_(c+1) didn't exist, a KeyError fallback used c* = c + 1, mixing
-     Good-Turing with add-one. Good-Turing is now only used for counts
-     below GT_MAX_COUNT (5); larger counts, and the rare small count with
-     no N_(c+1), keep their raw count.
-   - The "prob = c_star / 1" branch that could never run is gone.
-
-   Two more problems turned up while fixing these:
-   - The simple Good-Turing estimate for an unseen bigram, c*_0 = N_1 / N_0,
-     is the same for every previous word. After a rare previous word that
-     adds up to far more than 1: after '' (the start of a line, seen once)
-     the probabilities added up to 5.25. Katz backoff fixes this by
-     sharing out only what was freed up after that particular word.
-   - unknown_unigram (N_1 / N) is the total probability of all the words
-     an author never used, but it was given to each one. An unseen word
-     scored about 4,000 times higher than a word seen once, so a line full
-     of words an author never used counted in that author's favour. It's
-     now split evenly over the unseen words in a vocabulary shared by all
-     the models (smooth_models()).
-
-   A third turned up while writing the tests (#16): for the 22-38 previous
-   words per author where Good-Turing frees up nothing, unseen bigrams got
-   Good-Turing's overall unseen share (N_1 / N) on top of the seen ones,
-   so their probabilities added up to as much as 1.34 (and to 2 on a tiny
-   corpus). The seen bigrams there are now scaled down to make room
-   (seen_scale), and the unseen share is capped at half. Now every word's
-   next-word probabilities add up to exactly 1. Accuracy went from 80.9%
-   to 80.8% (two sentences changed).
-
-6. [FIXED] Blank lines were always given to the first author.
-   A blank line has no tokens, so every model gave it a cost of 0. It was a
-   tie, and the first model in the author list always won it. 1,088 of
-   the 5,600 test lines are blank, so Austen (first in authorlist1) got
-   230 free "correct" answers and every other author's blank lines counted
-   as wrong. -test mode also printed an author for blank lines.
-   Both modes now skipped blank lines. (Since #10 the script classifies
-   sentences, which are never empty, so blank lines no longer come up.)
-
-Evaluation and data
--------------------
-7. [FIXED] The train/test file names were swapped.
-   Every 10th line went to training_<author>.txt and was used for testing,
-   and the other 90% went to dev_<author>.txt and was used to build the
-   models. The split is now done in memory (see #8) with clear names:
-   every TEST_EVERY-th (10th) sentence goes into the test set and the rest
-   into the training set.
-
-8. [FIXED] Default mode overwrote the dev_*.txt and training_*.txt files
-   every time it ran, and those generated files were committed to the
-   repo. run_no_test_flag() now splits each author's sentences in memory
-   and writes nothing, and the eight split files were deleted from the
-   repo.
-
-9. [FIXED] test.txt was part of the training data.
-   All 12 lines of the old test.txt (a passage from Emma) appeared word
-   for word in austen.txt, which -test mode trains on. test.txt now has one
-   passage per author, and each passage was removed from its author file,
-   so none of it is in the training data (see "How to run"). The old
-   Austen passage is still the first one, but it's no longer in
-   austen.txt. On the new file the classifier gets 26 of 33 sentences
-   right.
-
-10. [FIXED] It classified physical lines, not sentences.
-    The text is hard-wrapped at about 70 characters, so each "line" was a
-    fragment of about 13 tokens that often started and ended mid-sentence.
-    read_sentences() now splits each file into paragraphs at blank lines,
-    joins each paragraph's lines, and splits it into sentences with
-    nltk.sent_tokenize(). Both modes classify sentences: default mode holds
-    out every 10th sentence (80.8% correct), and -test mode prints one
-    guess per sentence of the input file.
-    sent_tokenize isn't perfect on this text: for example, it splits
-    "...set off to-morrow.'-If he would say so..." into two sentences at
-    the quote.
-
-11. [FIXED] Training and scoring treated line breaks differently.
-    During training, bigrams carried on across line breaks, but when
-    scoring every line started again from ''. The '' start token was
-    counted only once per file, so P(first word | '') was based on a count
-    of 1. Now training and scoring both work on sentences, and every
-    sentence starts with START_TOKEN ('<s>') in both. The start token is
-    counted once per sentence (5,759 times for Austen), and it isn't
-    counted as a word, so unigram probabilities still add up to 1.
-
-Usability
----------
-12. [FIXED] Command-line handling.
-    The -test flag had to be the second argument, and there was no usage
-    message: running with no arguments only printed "Please supply an
-    authorlist", and wrong arguments printed "Wrong number of arguments" or
-    "No -test flag". interface() now uses argparse: -test / --test can go
-    anywhere, -h / --help prints the help (as does running with no
-    arguments), and bad arguments or missing files print an error with the
-    usage. Files are checked before anything is downloaded or trained.
-
-13. [FIXED] Author names in the output.
-    -test mode printed the file name ("austen.txt") instead of the author,
-    and default mode stripped names with re.sub('.txt', '', ...), where
-    '.' matches any character. Both modes now name each author after their
-    file without the folder or extension (author_name()), and -test mode
-    lines the names up in a column.
-
-14. [FIXED] File names in the author list were relative to the current
-    directory, so the script only worked when run from this folder. They
-    are now relative to the author list's own folder (absolute paths work
-    too). A missing author file, or a list with fewer than two authors,
-    gives a clear error.
-
-15. [FIXED] It didn't check for or download the NLTK tokenizer data, so on
-    a fresh machine nltk.word_tokenize() raised LookupError.
-    download_nltk_data() now checks for 'punkt' and 'punkt_tab' and
-    downloads whichever is missing, the same way the POS tagger does. If a
-    download fails, it exits with a message naming the package.
-
-Cleanup
--------
-16. [FIXED] Unused and broken code.
-    test_prob_of_sentence(), test_good_turing() and test_lm() called
-    LanguageModel() without the required author argument (TypeError), used
-    paths like '/txt_ascii/austen.txt' (the root of the file system), and
-    only printed results instead of checking them. They were replaced by
-    test_bigram_classifier.py (see "Running the tests"). get_prob_of_w(), an
-    add-one version only used by a test function, and test_get_prob_of_w()
-    were removed.
-
-17. [FIXED] Small cleanups:
-    - The unused "from tokenize import Double" was removed. (It came from
-      Python's own source-code tokenizer, not NLTK.)
-    - LanguageModel.train() counts with collections.Counter instead of
-      "if x in d.keys(): ... else: ..." blocks; unigrams and bigrams are
-      Counters.
-    - The docstring's "Good-Touring" was corrected as part of #4 and #5, and
-      the unused tokens list was removed with the #10 rewrite.
-
-18. Unused files: words and test.py.
-    txt_ascii/ and txt_utf8/ are also unused, but are kept on purpose as
-    the original author files. They still contain the test.txt passages,
-    so don't train on them with test.txt, or the test passages will be in
-    the training data again.
+  To check that the tests catch real mistakes, bugs that were fixed in
+  this script were put back into bigram_classifier.py one at a time:
+  bigrams looked up with the two words swapped, costs multiplied instead
+  of added, the highest cost winning, a broken Good-Turing N_c table,
+  unseen words getting the whole unseen probability each, bigrams running
+  across sentences, author files looked up relative to the current
+  directory, and the fallback scaling. The tests catch all of them. The
+  n-gram tests were checked the same way against typical n-gram mistakes
+  (backing off to the wrong context, a context window one word short, too
+  little start padding, one N_c table for every order, smoothing the orders
+  top-down, and the fallback scaling), and catch all of them.

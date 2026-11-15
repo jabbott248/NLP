@@ -97,7 +97,7 @@ class TestTraining(unittest.TestCase):
         self.assertEqual(sum(self.lm.bigrams.values()), 9)  # one per token
 
     def test_frequency_of_frequencies(self):
-        # N_c counts bigrams seen exactly c times (issue #4)
+        # N_c counts bigrams seen exactly c times, under their final count
         self.assertEqual(self.lm.frequencies, Counter({1: 7, 2: 1}))
 
 
@@ -143,8 +143,8 @@ class TestSmoothing(unittest.TestCase):
                 self.assertTrue(0 < C.gt_get_prob_of_w(lm, word, prev) <= 1)
 
     def test_unseen_words_split_the_unseen_share(self):
-        # The words an author never used share N_1 / N between them (issue
-        # #5: each one used to get all of it).
+        # The words an author never used share N_1 / N between them, rather
+        # than each one getting all of it.
         for lm in self.models:
             unseen = len(self.vocab) + 1 - len(lm.unigrams)
             once = sum(1 for c in lm.unigrams.values() if c == 1)
@@ -292,7 +292,7 @@ class TestRealModels(unittest.TestCase):
         cls.vocab = shared_vocab(cls.models)
 
     def test_unseen_word_less_likely_than_word_seen_once(self):
-        # issue #5: an unseen word used to score ~4,000x a word seen once
+        # an unseen word must not score higher than a word seen once
         for lm in self.models:
             seen_once = next(w for w, c in lm.unigrams.items() if c == 1)
             self.assertLess(lm.unigram_prob('never-seen-word'),
